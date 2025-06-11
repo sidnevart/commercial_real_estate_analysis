@@ -1,0 +1,4 @@
+/venv
+/google-auth
+.env
+proxies.txt

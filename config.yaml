@@ -1,0 +1,48 @@
+# Property search settings
+search_area_granularity: район
+area_search_radius: 10000
+
+# Processing settings
+daily_check_enabled: true
+gpt_analysis_enabled: true
+advantage_price_threshold: -30
+market_yield_threshold: 10 
+
+# GPT prompt template
+gpt_prompt_template: |
+  You are a real estate classification expert. Based on the property description and details, classify it into one of these categories:
+
+  1. Street retail (with entrance from street):
+     - 70-120 m²
+     - 120-250 m²
+     - 250-500 m²
+     - 500-1000 m²
+     - 1000-1500 m²
+     - 1500+ m²
+
+  2. Offices:
+     - 1000-3500 m²
+
+  3. Standalone building:
+     - Any size
+
+  4. Industrial premises:
+     - Up to 1000 m²
+     - 1000-3000 m²
+     - 3000-5000 m²
+
+  5. Commercial land:
+     - 1+ hectare
+
+  Additionally, indicate:
+  - If there's any mention of basement or semi-basement
+  - If there's any indication this is the top floor (keywords: "last floor", "top floor", "mansard")
+
+  Property details:
+  - Name: {name}
+  - Description: {description}
+  - Area: {area} m²
+  - Property category: {category}
+
+  Format your answer as JSON:
+  {{"category": "category_name", "size_category": "size_range", "has_basement": true/false, "is_top_floor": true/false}}
