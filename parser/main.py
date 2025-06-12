@@ -4,10 +4,8 @@ import statistics
 import re
 from collections import defaultdict
 from typing import Dict, List
-
+import time
 from parser.torgi_async import fetch_lots
-#from parser.cian_selenium import fetch_nearby_offers, unformatted_address_to_cian_search_filter
-#from parser.cian_minimal import fetch_nearby_offers, unformatted_address_to_cian_search_filter
 from parser.cian_minimal import fetch_nearby_offers, unformatted_address_to_cian_search_filter
 from parser.google_sheets import push_lots, push_offers, push_district_stats
 from parser.gpt_classifier import classify_property  
@@ -111,91 +109,171 @@ def calculate_profitability(lot: Lot, median_prices: Dict[str, float]) -> float:
     return round(profitability, 2)
 
 async def main():
-    lots = await fetch_lots(max_pages=2)
-    logging.info("Got %d lots", len(lots))
+    try:
+        lots = await fetch_lots(max_pages=2)
+        logging.info("Got %d lots", len(lots))
 
-    cian_metrics = get_cian_metrics()
-    logging.info(f"Статус CIAN-парсера: {cian_metrics}")
-    
-    offers_by_district = defaultdict(list)
-    district_offer_count = defaultdict(int)
-    total_sale_offers = 0
-    total_rent_offers = 0
-    batch_size = 3
-    current_batch_sale = []
-    current_batch_rent = []
-    
-    # Получаем радиус поиска из конфигурации
-    search_radius = CONFIG.get("area_search_radius", 5)  # По умолчанию 5 км
-    
-    for i, lot in enumerate(lots, 1):
-        try:
-            lot.district = calculate_district(lot.address)
-            logger.info(f"Lot {lot.id} is in district: {lot.district}")
-            
-            lot_uuid = lot.uuid
-            search_filter = unformatted_address_to_cian_search_filter(lot.address)
-            logging.info(f"Generated search filter: {search_filter}")
-            
-            # Получаем все объявления из района
-            sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot_uuid)
-            logging.info(f"Получено {len(sale_offers)} объявлений о продаже и {len(rent_offers)} объявлений об аренде")
-            
-            # Дополнительная проверка для отладки
-            if not sale_offers and not rent_offers:
-                logging.warning(f"⚠️ Не получено ни одного объявления для лота {lot.id} (адрес: {lot.address})")
-            
-            # Фильтруем объявления по расстоянию от лота
-            logging.info(f"Фильтрация объявлений по расстоянию (макс. {search_radius} км) для лота {lot.id}")
-            filtered_sale_offers = await filter_offers_by_distance(lot.address, sale_offers, search_radius)
-            filtered_rent_offers = await filter_offers_by_distance(lot.address, rent_offers, search_radius)
-            
-            logging.info(f"После фильтрации: {len(filtered_sale_offers)} из {len(sale_offers)} объявлений о продаже и "
-                         f"{len(filtered_rent_offers)} из {len(rent_offers)} объявлений об аренде в радиусе {search_radius} км")
-            
-            # Обрабатываем только отфильтрованные объявления и добавляем их в offers_by_district
-            for offer in filtered_sale_offers:
-                offer.district = calculate_district(offer.address)
-                # Дополнительная проверка для отладки - вывести найденный район предложения
-                logging.debug(f"Offer {offer.id} district: {offer.district}")
+        # Проверка работоспособности CIAN-парсера
+        cian_metrics = get_cian_metrics()
+        logging.info(f"Статус CIAN-парсера: {cian_metrics}")
+        
+        offers_by_district = defaultdict(list)
+        district_offer_count = defaultdict(int)
+        total_sale_offers = 0
+        total_rent_offers = 0
+        batch_size = 3
+        current_batch_sale = []
+        current_batch_rent = []
+        
+        # Получаем радиус поиска из конфигурации
+        search_radius = CONFIG.get("area_search_radius", 5)  # По умолчанию 5 км
+        debug_radius = CONFIG.get("debug_search_radius", None)  # Добавьте этот ключ в config.py, например "debug_search_radius": 100
+        
+        for i, lot in enumerate(lots, 1):
+            try:
+                lot.district = calculate_district(lot.address)
+                logger.info(f"Lot {lot.id} is in district: {lot.district}")
                 
-                # Убедимся, что district определен и не пуст
-                if offer.district and offer.district != "Unknown":
-                    offers_by_district[offer.district].append(offer)
-                    district_offer_count[offer.district] += 1
-                else:
-                    # Если район не определен, используем район лота
-                    if lot.district and lot.district != "Unknown":
-                        logging.info(f"Используем район лота ({lot.district}) для предложения без района")
-                        offer.district = lot.district
+                lot_uuid = lot.uuid
+                search_filter = unformatted_address_to_cian_search_filter(lot.address)
+                logging.info(f"Generated search filter: {search_filter}")
+                
+                # Получаем все объявления из района
+                sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot_uuid)
+                logging.info(f"Получено {len(sale_offers)} объявлений о продаже и {len(rent_offers)} объявлений об аренде")
+                
+                # Дополнительная проверка для отладки
+                if not sale_offers and not rent_offers:
+                    logging.warning(f"⚠️ Не получено ни одного объявления для лота {lot.id} (адрес: {lot.address})")
+                
+                # Используем обычный или отладочный радиус
+                effective_radius = debug_radius if debug_radius else search_radius
+                
+                # Временно увеличиваем радиус, если нет объявлений и не задан отладочный радиус
+                if not debug_radius and (not sale_offers or not rent_offers) and search_radius < 10:
+                    logging.info(f"Увеличиваем радиус поиска до 10 км из-за малого количества объявлений")
+                    effective_radius = 10
+                    
+                # Если нет объявлений вообще, используем режим отладки с большим радиусом
+                if not sale_offers and not rent_offers and not debug_radius:
+                    logging.warning("⚠️ Нет объявлений, включаем режим отладки (радиус 1000 км)")
+                    effective_radius = 1000  # Очень большой радиус для отладки
+                
+                # Фильтруем объявления по расстоянию от лота
+                logging.info(f"Фильтрация объявлений по расстоянию (макс. {effective_radius} км) для лота {lot.id}")
+                
+                filtered_sale_offers = await filter_offers_by_distance(lot.address, sale_offers, effective_radius)
+                filtered_rent_offers = await filter_offers_by_distance(lot.address, rent_offers, effective_radius)
+                
+                # Добавим логирование расстояний для отладки
+                if filtered_sale_offers:
+                    logging.info("Примеры расстояний для объявлений о продаже:")
+                    for i, offer in enumerate(filtered_sale_offers[:3]):
+                        dist = getattr(offer, 'distance_to_lot', 'не определено')
+                        logging.info(f"  {i+1}. ID: {offer.id}, Цена: {offer.price}, "
+                                    f"Расстояние до лота: {dist} км, "
+                                    f"Адрес: {offer.address[:50]}...")
+                
+                logging.info(f"После фильтрации: {len(filtered_sale_offers)} из {len(sale_offers)} объявлений о продаже и "
+                            f"{len(filtered_rent_offers)} из {len(rent_offers)} объявлений об аренде в радиусе {effective_radius} км")
+                
+                # Если после фильтрации нет объявлений, выдаем предупреждение
+                if not filtered_sale_offers and sale_offers:
+                    logging.warning(f"⚠️ Все объявления о продаже отфильтрованы по расстоянию (радиус {effective_radius} км)")
+                
+                if not filtered_rent_offers and rent_offers:
+                    logging.warning(f"⚠️ Все объявления об аренде отфильтрованы по расстоянию (радиус {effective_radius} км)")
+                
+                # Обрабатываем только отфильтрованные объявления и добавляем их в offers_by_district
+                for offer in filtered_sale_offers:
+                    offer.district = calculate_district(offer.address)
+                    # Дополнительная проверка для отладки - вывести найденный район предложения
+                    logging.debug(f"Offer {offer.id} district: {offer.district}")
+                    
+                    # Убедимся, что district определен и не пуст
+                    if offer.district and offer.district != "Unknown":
                         offers_by_district[offer.district].append(offer)
                         district_offer_count[offer.district] += 1
-            
-            # Выведем промежуточную статистику для отладки
-            logging.info(f"Текущее количество объявлений по районам: {dict(district_offer_count)}")
-            
-            current_batch_sale.extend(filtered_sale_offers)
-            current_batch_rent.extend(filtered_rent_offers)
-            
-            total_sale_offers += len(filtered_sale_offers)
-            total_rent_offers += len(filtered_rent_offers)
-            
-            # Добавим паузу между обработкой лотов, чтобы уменьшить нагрузку
-            await asyncio.sleep(1)
-            
-            if i % batch_size == 0 or i == len(lots):
-                if current_batch_sale:
-                    logging.info(f"Pushing batch of {len(current_batch_sale)} sale offers to Google Sheets")
-                    push_offers("cian_sale", current_batch_sale)
-                    current_batch_sale = []
-                    
-                if current_batch_rent:
-                    logging.info(f"Pushing batch of {len(current_batch_rent)} rent offers to Google Sheets")
-                    push_offers("cian_rent", current_batch_rent)
-                    current_batch_rent = []
+                    else:
+                        # Если район не определен, используем район лота
+                        if lot.district and lot.district != "Unknown":
+                            logging.info(f"Используем район лота ({lot.district}) для предложения без района")
+                            offer.district = lot.district
+                            offers_by_district[offer.district].append(offer)
+                            district_offer_count[offer.district] += 1
                 
-        except Exception as e:
-            logging.error(f"Error processing lot {lot.id}: {e}", exc_info=True)
+                # Выведем промежуточную статистику для отладки
+                logging.info(f"Текущее количество объявлений по районам: {dict(district_offer_count)}")
+                
+                current_batch_sale.extend(filtered_sale_offers)
+                current_batch_rent.extend(filtered_rent_offers)
+                
+                total_sale_offers += len(filtered_sale_offers)
+                total_rent_offers += len(filtered_rent_offers)
+                
+                # Добавим паузу между обработкой лотов, чтобы уменьшить нагрузку
+                await asyncio.sleep(1)
+                
+                # Отправляем пакеты объявлений в Google Sheets
+                if i % batch_size == 0 or i == len(lots):
+                    if current_batch_sale:
+                        logging.info(f"Pushing batch of {len(current_batch_sale)} sale offers to Google Sheets")
+                        push_offers("cian_sale", current_batch_sale)
+                        current_batch_sale = []
+                        
+                    if current_batch_rent:
+                        logging.info(f"Pushing batch of {len(current_batch_rent)} rent offers to Google Sheets")
+                        push_offers("cian_rent", current_batch_rent)
+                        current_batch_rent = []
+
+                # Обрабатываем последний лот
+                if i == len(lots):  # После обработки всех лотов
+                    # Рассчитываем медианные цены по районам
+                    logging.info("Calculating median prices by district")
+                    median_prices = calculate_median_prices(offers_by_district)
+                    logging.info(f"Median prices: {median_prices}")
+                    
+                    # Добавляем рыночные цены и доходность в лоты
+                    for lot in lots:
+                        # Добавляем информацию о рыночной цене
+                        if lot.district in median_prices:
+                            lot.median_market_price = median_prices[lot.district] * lot.area
+                            lot.profitability = calculate_profitability(lot, median_prices)
+                            logging.info(f"Lot {lot.id}: Profitability = {lot.profitability:.1f}%")
+                        
+                        # Классификация объектов через GPT
+                        if CONFIG.get("gpt_analysis_enabled", False):
+                            lot.classification = await classify_property(lot)
+                    
+                    # Отправляем лоты в Google Sheets независимо от наличия объявлений
+                    logging.info("Pushing lots to Google Sheets")
+                    push_lots(lots)
+                    
+                    # Отправляем статистику по районам с защитой от пустого списка
+                    if district_offer_count:
+                        logging.info(f"Отправка статистики по {len(district_offer_count)} районам")
+                        push_district_stats(dict(district_offer_count))
+                    else:
+                        # Создаем заглушку, чтобы избежать ошибки с пустым списком
+                        logging.warning("Нет данных о районах. Создаем заглушку для статистики.")
+                        push_district_stats({"Москва": 0})
+                    
+            except Exception as e:
+                logging.error(f"Error processing lot {lot.id}: {e}", exc_info=True)
+    except Exception as e:
+        logging.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}", exc_info=True)
+        # Сохраняем состояние для отладки
+        import pickle
+        try:
+            with open(f"crash_dump_{int(time.time())}.pkl", "wb") as f:
+                pickle.dump({
+                    "lots": locals().get("lots", []),
+                    "offers_by_district": locals().get("offers_by_district", {}),
+                    "error": str(e)
+                }, f)
+            logging.info("✅ Сохранено состояние для отладки")
+        except Exception as dump_error:
+            logging.error(f"❌ Не удалось сохранить состояние: {dump_error}")
 
 if __name__ == "__main__":
     asyncio.run(main())

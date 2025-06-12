@@ -1,12 +1,14 @@
 # Property search settings
 search_area_granularity: район
-area_search_radius: 10000
+area_search_radius: 5
+debug_search_radius: 100
 
 # Processing settings
 daily_check_enabled: true
 gpt_analysis_enabled: true
 advantage_price_threshold: -30
 market_yield_threshold: 10 
+
 
 # GPT prompt template
 gpt_prompt_template: |

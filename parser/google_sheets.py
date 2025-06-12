@@ -246,12 +246,16 @@ def push_lots(lots: List[Lot]):
         raise
 
 
+# В функции push_offers в файле google_sheets.py добавить вывод расстояния
 def push_offers(sheet: str, offers: List[Offer]):
     """Push offer data including address and calculated price per sq.m."""
     rows = []
     for off in offers:
         # Calculate price per square meter
         price_per_sqm = off.price / off.area if off.area > 0 else 0
+        
+        # Добавляем расстояние до лота, если оно определено
+        distance_to_lot = getattr(off, 'distance_to_lot', '')
         
         # Format row with all required fields
         rows.append([
@@ -260,7 +264,7 @@ def push_offers(sheet: str, offers: List[Offer]):
             off.area,          # Area in square meters
             price_per_sqm,     # Price per square meter (calculated)
             off.price,         # Total price
-            off.distance_to_lot if hasattr(off, 'distance_to_lot') else "", # Расстояние до лота
+            distance_to_lot,   # Расстояние до лота
             off.url,           # URL to the offer
             str(off.lot_uuid)  # UUID of the associated lot
         ])
@@ -268,8 +272,16 @@ def push_offers(sheet: str, offers: List[Offer]):
 
 def push_district_stats(district_stats: Dict[str, int]):
     """Push district offer count statistics to a separate sheet."""
+    if not district_stats:
+        logger.warning("Попытка отправить пустую статистику по районам")
+        district_stats = {"Москва": 0}  # Заглушка, чтобы не было пустого списка
+    
     rows = []
     for district, count in district_stats.items():
         rows.append([district, count])
     
+    if not rows:
+        logger.warning("После обработки получен пустой список районов")
+        rows = [["Москва", 0]]  # Вторая защита от пустого списка
+        
     _append("district_stats", rows)

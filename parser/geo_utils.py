@@ -3,6 +3,7 @@ import math
 import logging
 import httpx
 import asyncio
+from core.models import Offer  # Предполагается, что Offer - это модель объявления с атрибутами address и distance_to_lot
 from typing import Tuple, Optional, List, Dict
 
 # Configure logging
@@ -20,12 +21,26 @@ async def get_coords_by_address(address: str) -> Optional[Tuple[float, float]]:
     Получение координат по адресу через API 2GIS.
     Возвращает кортеж (долгота, широта) или None в случае ошибки.
     """
+    if not address:
+        logger.warning("get_coords_by_address: Пустой адрес")
+        return None
+    
+    # Очищаем адрес от лишних символов и сокращений для улучшения геокодирования
+    clean_address = address.strip()
+    for old, new in {
+        "г.": "город ", "ул.": "улица ", "пр-т": "проспект ", "пр.": "проспект ",
+        "б-р": "бульвар ", "пер.": "переулок ", "пл.": "площадь ", "р-н": "район "
+    }.items():
+        clean_address = clean_address.replace(old, new)
+    
     try:
         params = {
-            "q": address,
+            "q": clean_address,
             "fields": "items.point",
             "key": DGIS_API_KEY
         }
+        
+        logger.info(f"Запрос координат для: '{clean_address}'")
         
         async with httpx.AsyncClient() as client:
             response = await client.get(DGIS_GEOCODE_API, params=params, timeout=10.0)
@@ -38,16 +53,76 @@ async def get_coords_by_address(address: str) -> Optional[Tuple[float, float]]:
                     point = items[0].get("point")
                     if point:
                         lon, lat = point.get("lon"), point.get("lat")
-                        logger.info(f"Получены координаты для адреса '{address}': {lat}, {lon}")
-                        return (lon, lat)
+                        logger.info(f"✅ Получены координаты для '{clean_address}': широта={lat}, долгота={lon}")
+                        return (float(lon), float(lat))
+                    else:
+                        logger.warning(f"⚠️ В ответе нет точки для '{clean_address}': {items[0]}")
+                else:
+                    logger.warning(f"⚠️ Пустой список items для '{clean_address}'")
+            else:
+                if "meta" in data:
+                    logger.warning(f"⚠️ API вернул код {data['meta'].get('code')} для '{clean_address}'")
+                    if data['meta'].get('message'):
+                        logger.warning(f"⚠️ Сообщение API: {data['meta'].get('message')}")
+                
+                # Пытаемся извлечь больше информации об ошибке
+                if "message" in data:
+                    logger.warning(f"⚠️ Сообщение ошибки: {data['message']}")
             
-            logger.warning(f"Не удалось получить координаты для адреса '{address}'")
+            logger.warning(f"❌ Не удалось получить координаты для '{clean_address}'")
             return None
             
     except Exception as e:
-        logger.error(f"Ошибка при получении координат для адреса '{address}': {e}")
+        logger.error(f"❌ Ошибка при получении координат для '{clean_address}': {str(e)}")
         return None
 
+def haversine_distance(coord1: Tuple[float, float], coord2: Tuple[float, float]) -> float:
+    """
+    Расчет прямого расстояния между двумя точками без использования API.
+    
+    coord1, coord2: Кортежи (долгота, широта)
+    Возвращает расстояние в километрах.
+    """
+    # Радиус Земли в км
+    R = 6371.0
+    
+    # Проверка на корректность координат
+    if not all(isinstance(c, (int, float)) for c in coord1 + coord2):
+        logger.error(f"Некорректный формат координат: coord1={coord1}, coord2={coord2}")
+        # Преобразуем строки в числа, если это возможно
+        try:
+            coord1 = (float(coord1[0]), float(coord1[1]))
+            coord2 = (float(coord2[0]), float(coord2[1]))
+        except (ValueError, TypeError):
+            logger.error("Невозможно преобразовать координаты в числа")
+            return float('inf')
+    
+    # Убедимся, что долгота и широта в правильном диапазоне
+    if not (-90 <= float(coord1[1]) <= 90 or -90 <= float(coord2[1]) <= 90):
+        logger.warning(f"⚠️ Возможно перепутаны широта и долгота: coord1={coord1}, coord2={coord2}")
+        # Попробуем поменять местами широту и долготу
+        if -90 <= float(coord1[0]) <= 90 and -90 <= float(coord2[0]) <= 90:
+            logger.info("Меняем местами широту и долготу")
+            coord1 = (coord1[1], coord1[0])
+            coord2 = (coord2[1], coord2[0])
+    
+    # Переводим координаты из градусов в радианы
+    lon1, lat1 = math.radians(float(coord1[0])), math.radians(float(coord1[1]))
+    lon2, lat2 = math.radians(float(coord2[0])), math.radians(float(coord2[1]))
+    
+    # Разница координат
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    
+    # Формула гаверсинуса
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    distance = R * c
+    
+    logger.debug(f"Расстояние по формуле гаверсинуса: {distance:.2f} км")
+    return distance
+
+# Обновляем функцию calculate_distance для лучшей обработки ошибок
 async def calculate_distance(source_coords: Tuple[float, float], 
                            target_coords: Tuple[float, float]) -> Optional[float]:
     """
@@ -55,9 +130,14 @@ async def calculate_distance(source_coords: Tuple[float, float],
     Возвращает расстояние в километрах или None в случае ошибки.
     """
     try:
-        # Формат координат для API: [lon, lat]
-        source_point = f"{source_coords[0]},{source_coords[1]}"
-        target_point = f"{target_coords[0]},{target_coords[1]}"
+        # Убедимся, что координаты являются числами
+        # В функции calculate_distance исправьте форматирование координат:
+        source_point = f"{source_coords[0]},{source_coords[1]}"  # Было
+        source_point = f"{source_coords[0]:.6f},{source_coords[1]:.6f}"  # Стало (с фиксированной точностью)
+        target_point = f"{target_coords[0]},{target_coords[1]}"  # Было
+        target_point = f"{target_coords[0]:.6f},{target_coords[1]:.6f}"  # Стало
+        
+        logger.debug(f"Расчет расстояния между точками: {source_point} → {target_point}")
         
         params = {
             "key": DGIS_API_KEY,
@@ -76,44 +156,35 @@ async def calculate_distance(source_coords: Tuple[float, float],
                 # Расстояние в метрах, переводим в километры
                 distance_meters = data["rows"][0]["elements"][0]["distance"]["value"]
                 distance_km = distance_meters / 1000
+                logger.debug(f"API вернул расстояние: {distance_km:.2f} км")
                 return distance_km
             
-            logger.warning(f"Не удалось получить расстояние между точками")
-            return None
+            # Подробный вывод ошибки, если есть
+            if "message" in data:
+                logger.warning(f"⚠️ API вернул ошибку: {data['message']}")
+            elif "error" in data:
+                logger.warning(f"⚠️ API вернул ошибку: {data['error']}")
+            else:
+                logger.warning(f"⚠️ Неожиданный формат ответа: {data}")
+            
+            # Если API не сработал, вернём расстояние по прямой
+            distance_km = haversine_distance(source_coords, target_coords)
+            logger.info(f"Используем резервный метод расчета расстояния: {distance_km:.2f} км")
+            return distance_km
             
     except Exception as e:
-        logger.error(f"Ошибка при расчете расстояния: {e}")
-        return None
+        logger.error(f"❌ Ошибка при расчете расстояния: {str(e)}")
+        # В случае ошибки возвращаем расстояние по прямой
+        try:
+            distance = haversine_distance(source_coords, target_coords)
+            logger.info(f"Используем формулу гаверсинуса из-за ошибки API: {distance:.2f} км")
+            return distance
+        except Exception as e2:
+            logger.error(f"❌ Также не удалось рассчитать расстояние по гаверсинусу: {str(e2)}")
+            return None
 
-def haversine_distance(coord1: Tuple[float, float], coord2: Tuple[float, float]) -> float:
-    """
-    Расчет прямого расстояния между двумя точками без использования API.
-    Использует формулу гаверсинусов для вычисления расстояния по дуге большого круга.
-    Это быстрый резервный метод, но он не учитывает дороги.
-    
-    coord1, coord2: Кортежи (долгота, широта)
-    Возвращает расстояние в километрах.
-    """
-    # Радиус Земли в км
-    R = 6371.0
-    
-    # Переводим координаты из градусов в радианы
-    lon1, lat1 = math.radians(coord1[0]), math.radians(coord1[1])
-    lon2, lat2 = math.radians(coord2[0]), math.radians(coord2[1])
-    
-    # Разница координат
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    
-    # Формула гаверсинуса
-    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    distance = R * c
-    
-    return distance
-
-async def filter_offers_by_distance(lot_address: str, offers: List[Dict], 
-                                  max_distance_km: float) -> List[Dict]:
+async def filter_offers_by_distance(lot_address: str, offers: List[Offer], 
+                                  max_distance_km: float) -> List[Offer]:
     """
     Фильтрует список объявлений по расстоянию от лота.
     
@@ -125,47 +196,152 @@ async def filter_offers_by_distance(lot_address: str, offers: List[Dict],
     Возвращает:
     - Отфильтрованный список объявлений в пределах заданного расстояния
     """
+    logger.info(f"🔍 Фильтрация {len(offers)} объявлений в радиусе {max_distance_km} км от {lot_address}")
+    
     if not offers:
+        logger.warning("📭 Получен пустой список объявлений для фильтрации")
         return []
+    
+    # Режим отладки - пропускать ошибки геокодирования при очень большом радиусе
+    debug_mode = max_distance_km > 1000
+    if debug_mode:
+        logger.warning(f"⚠️ Включен режим отладки с радиусом {max_distance_km} км")
+    
+    # Проверяем адрес лота
+    if not lot_address:
+        logger.error("❌ Не указан адрес лота для фильтрации")
+        return offers if debug_mode else []
     
     # Получаем координаты лота
     lot_coords = await get_coords_by_address(lot_address)
     if not lot_coords:
-        logger.warning(f"Не удалось получить координаты для лота с адресом '{lot_address}'. Все объявления будут включены.")
-        return offers
+        logger.error(f"❌ Не удалось получить координаты для лота с адресом '{lot_address}'")
+        if debug_mode:
+            logger.warning("⚠️ Режим отладки: возвращаем все объявления без фильтрации")
+            return offers
+        return []
+    
+    logger.info(f"✅ Координаты лота: долгота={lot_coords[0]}, широта={lot_coords[1]}")
+    
+    # Счетчики для отладки
+    no_address_count = 0
+    no_coords_count = 0
+    rejected_by_distance_count = 0
+    accepted_count = 0
     
     filtered_offers = []
     
+    # Сохраняем информацию о расстояниях для отладки
+    distance_info = []
+    
     # Обрабатываем каждое объявление
-    for offer in offers:
+    for i, offer in enumerate(offers):
         try:
+            offer_id = getattr(offer, 'id', f'offer_{i}')
+            
             # Если в объявлении нет адреса, пропускаем его
-            if not offer.address:
+            if not getattr(offer, 'address', None):
+                no_address_count += 1
+                logger.warning(f"⚠️ Объявление {offer_id} не имеет адреса")
                 continue
                 
             # Получаем координаты объявления
-            offer_coords = await get_coords_by_address(offer.address)
+            offer_address = getattr(offer, 'address', '')
+            logger.info(f"Получение координат для объявления {offer_id}: {offer_address}")
+            
+            offer_coords = await get_coords_by_address(offer_address)
             if not offer_coords:
+                no_coords_count += 1
+                logger.warning(f"❌ Не удалось получить координаты для объявления {offer_id}")
                 continue
+            
+            logger.info(f"✅ Координаты объявления {offer_id}: долгота={offer_coords[0]}, широта={offer_coords[1]}")
                 
             # Сначала используем быструю приблизительную проверку через haversine
             approx_distance = haversine_distance(lot_coords, offer_coords)
+            logger.info(f"📏 Приблизительное расстояние до объявления {offer_id}: {approx_distance:.2f} км")
             
-            if approx_distance <= max_distance_km * 1.5:  # Используем запас 50%
+            # Сохраняем для отладки
+            distance_info.append({
+                "offer_id": offer_id,
+                "address": offer_address,
+                "coords": offer_coords,
+                "approx_distance": approx_distance
+            })
+            
+            # Используем запас 50%, так как haversine дает расстояние по прямой, а не по дорогам
+            buffer_distance = max_distance_km * 1.5
+            if approx_distance <= buffer_distance:
                 # Для потенциально близких объявлений делаем точную проверку через API
                 exact_distance = await calculate_distance(lot_coords, offer_coords)
                 
-                # Если API вернул ошибку, используем приблизительное расстояние
+                if exact_distance is not None:
+                    logger.info(f"📏 Точное расстояние до объявления {offer_id}: {exact_distance:.2f} км")
+                else:
+                    logger.warning(f"⚠️ Не удалось получить точное расстояние для объявления {offer_id}")
+                    exact_distance = approx_distance  # Используем приблизительное расстояние как резерв
+                
+                # Используем точное расстояние, если оно доступно, иначе приблизительное
                 distance = exact_distance if exact_distance is not None else approx_distance
                 
                 if distance <= max_distance_km:
-                    # Сохраняем расстояние в объявлении для дальнейшего использования
+                    # Записываем расстояние в атрибут объявления для отображения в Excel
                     offer.distance_to_lot = distance
                     filtered_offers.append(offer)
-                    logger.debug(f"Объявление с ID {offer.id} находится в {distance:.2f} км от лота")
-            
+                    accepted_count += 1
+                    logger.info(f"✅ Объявление {offer_id} (адрес: {offer_address[:50]}...) включено: "
+                                f"расстояние {distance:.2f} км от лота (адрес: {lot_address[:50]}...)")
+                else:
+                    rejected_by_distance_count += 1
+                    logger.info(f"❌ Объявление {offer_id} (адрес: {offer_address[:50]}...) отклонено: "
+                                f"расстояние {distance:.2f} км > {max_distance_km} км")
+            else:
+                rejected_by_distance_count += 1
+                logger.info(f"✗ Объявление {offer_id} слишком далеко: {approx_distance:.2f} км > {buffer_distance:.2f} км (буфер)")
+        
         except Exception as e:
-            logger.error(f"Ошибка при фильтрации объявления: {e}")
+            logger.error(f"❌ Ошибка при фильтрации объявления {getattr(offer, 'id', 'unknown')}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+    logger.info(f"Статистика по расстояниям для лота (адрес: {lot_address}):")
+    if distance_info:
+        min_dist = min(info['approx_distance'] for info in distance_info)
+        max_dist = max(info['approx_distance'] for info in distance_info)
+        avg_dist = sum(info['approx_distance'] for info in distance_info) / len(distance_info)
+        
+        logger.info(f"Минимальное расстояние: {min_dist:.2f} км")
+        logger.info(f"Максимальное расстояние: {max_dist:.2f} км")
+        logger.info(f"Среднее расстояние: {avg_dist:.2f} км")
     
-    logger.info(f"Отфильтровано {len(filtered_offers)} из {len(offers)} объявлений по расстоянию {max_distance_km} км")
+    # Сводная информация
+    logger.info(f"📊 Результаты фильтрации по расстоянию {max_distance_km} км:")
+    logger.info(f"  • Всего объявлений: {len(offers)}")
+    logger.info(f"  • Без адреса: {no_address_count}")
+    logger.info(f"  • Без координат: {no_coords_count}")
+    logger.info(f"  • Отклонено по расстоянию: {rejected_by_distance_count}")
+    logger.info(f"  • ПРИНЯТО: {accepted_count}")
+    
+    if not filtered_offers and distance_info:
+        # Если ни одно объявление не прошло фильтр, показываем топ-10 ближайших
+        distance_info.sort(key=lambda x: x['approx_distance'])
+        logger.warning("⚠️ НИ ОДНО ОБЪЯВЛЕНИЕ НЕ ПРОШЛО ФИЛЬТР! 10 ближайших:")
+        for i, info in enumerate(distance_info[:10]):
+            logger.warning(f"  {i+1}. ID: {info['offer_id']}, "
+                         f"Расстояние: {info['approx_distance']:.2f} км, "
+                         f"Адрес: {info['address']}")
+            
+        # Если в режиме отладки и нет подходящих объявлений, вернем первые 5 ближайших
+        if debug_mode and distance_info:
+            logger.warning("⚠️ Режим отладки: возвращаем 5 ближайших объявлений")
+            closest_offers = []
+            for i, info in enumerate(distance_info[:5]):
+                for offer in offers:
+                    if getattr(offer, 'id', '') == info['offer_id']:
+                        offer.distance_to_lot = info['approx_distance']
+                        closest_offers.append(offer)
+                        break
+            if closest_offers:
+                return closest_offers
+    
     return filtered_offers
