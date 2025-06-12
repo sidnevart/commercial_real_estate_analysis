@@ -59,6 +59,33 @@ address_replacements = {
 # Словарь соответствия названий районов Москвы и их ID на Циан
 moscow_district_name_to_cian_id = {}
 
+def refresh_session(self):
+    """Перезапускает сессию браузера для освобождения памяти"""
+    try:
+        if self.driver:
+            current_cookies = self.driver.get_cookies()
+            self.driver.quit()
+            
+        # Короткая пауза
+        time.sleep(3)
+        
+        # Реинициализация драйвера
+        self.initialize_driver()
+        
+        # Восстанавливаем куки если возможно
+        if hasattr(self, 'driver') and self.driver and 'current_cookies' in locals():
+            self.driver.get(CIAN_MAIN_URL)
+            for cookie in current_cookies:
+                try:
+                    self.driver.add_cookie(cookie)
+                except:
+                    pass
+                    
+        log.info("Сессия браузера успешно перезапущена")
+        return True
+    except Exception as e:
+        log.error(f"Ошибка при перезапуске сессии браузера: {e}")
+        return False
 
 def save_debug_info(url: str, html: str, driver=None, prefix="page"):
     """Сохраняет HTML страницы и скриншот для отладки."""

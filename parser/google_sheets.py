@@ -105,9 +105,11 @@ def _format_cells(sheet_id, start_row, end_row, column, condition, color):
                 logger.debug(f"Не удалось применить форматирование {alt_condition}: {e2}")
 
 # public API ------------------------------------------------------
-def push_lots(lots: List[Lot]):
-    """Push full lot data to the 'torgi' sheet."""
-    logger.info(f"Начинаем выгрузку {len(lots)} лотов в Google Sheets")
+def push_lots(lots: List[Lot], sheet_suffix: str = ""):
+    """Push full lot data to the 'torgi' sheet with optional suffix."""
+    sheet_name = f"torgi{sheet_suffix}"
+    
+    logger.info(f"Начинаем выгрузку {len(lots)} лотов в Google Sheets на лист {sheet_name}")
     
     if not lots:
         logger.warning("Пустой список лотов, нечего выгружать")
@@ -181,15 +183,15 @@ def push_lots(lots: List[Lot]):
         logger.info(f"Подготовлено {len(rows)} строк данных для выгрузки")
         
         sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
-        sheet_exists = any(sheet['properties']['title'] == 'torgi' for sheet in sheets_metadata['sheets'])
+        sheet_exists = any(sheet['properties']['title'] == sheet_name for sheet in sheets_metadata['sheets'])
         
         if not sheet_exists:
-            logger.error("Лист 'torgi' не найден в таблице Google Sheets. Создаем новый лист.")
+            logger.info(f"Лист '{sheet_name}' не найден в таблице Google Sheets. Создаем новый лист.")
             body = {
                 'requests': [{
                     'addSheet': {
                         'properties': {
-                            'title': 'torgi'
+                            'title': sheet_name
                         }
                     }
                 }]
@@ -198,13 +200,18 @@ def push_lots(lots: List[Lot]):
         
         result = _svc.spreadsheets().values().get(
             spreadsheetId=GSHEET_ID,
-            range="torgi!A:A"
+            range=f"{sheet_name}!A:A"
+        ).execute()
+        
+        result = _svc.spreadsheets().values().get(
+            spreadsheetId=GSHEET_ID,
+            range=f"{sheet_name}!A:A"
         ).execute()
         start_row = len(result.get('values', [])) + 1
         logger.info(f"Начинаем запись с {start_row} строки")
         
-        _append("torgi", rows)
-        logger.info(f"Данные успешно отправлены в Google Sheets")
+        _append(sheet_name, rows)
+        logger.info(f"Данные успешно отправлены в лист {sheet_name}")
         
         sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
         
@@ -249,6 +256,9 @@ def push_lots(lots: List[Lot]):
 # В функции push_offers в файле google_sheets.py добавить вывод расстояния
 def push_offers(sheet: str, offers: List[Offer]):
     """Push offer data including address and calculated price per sq.m."""
+    if not offers:
+        logger.warning(f"Попытка отправить пустой список объявлений в лист {sheet}")
+        return
     rows = []
     for off in offers:
         # Calculate price per square meter
@@ -268,7 +278,24 @@ def push_offers(sheet: str, offers: List[Offer]):
             off.url,           # URL to the offer
             str(off.lot_uuid)  # UUID of the associated lot
         ])
+    sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+    sheet_exists = any(s['properties']['title'] == sheet for s in sheets_metadata['sheets'])
+
+    if not sheet_exists:
+        logger.info(f"Лист '{sheet}' не найден. Создаем новый лист.")
+        body = {
+            'requests': [{
+                'addSheet': {
+                    'properties': {
+                        'title': sheet
+                    }
+                }
+            }]
+        }
+        _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
     _append(sheet, rows)
+
+   
 
 def push_district_stats(district_stats: Dict[str, int]):
     """Push district offer count statistics to a separate sheet."""

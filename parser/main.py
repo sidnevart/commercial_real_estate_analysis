@@ -13,6 +13,8 @@ from parser.cian_minimal import get_parser
 from core.models import Lot, Offer, PropertyClassification
 from core.config import CONFIG
 from parser.geo_utils import filter_offers_by_distance
+import os
+import pickle
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -90,6 +92,81 @@ def calculate_median_prices(offers_by_district: Dict[str, List[Offer]]) -> Dict[
             median_prices[district] = statistics.median(prices_per_sqm)
     return median_prices
 
+def load_checkpoint():
+    """Загружает последний доступный чекпоинт."""
+    try:
+        # Найдем все файлы чекпоинтов
+        checkpoint_files = sorted(
+            [f for f in os.listdir(".") if f.startswith("checkpoint_")],
+            key=lambda x: os.path.getmtime(x),
+            reverse=True
+        )
+        
+        if not checkpoint_files:
+            logging.info("🔍 Чекпоинты не найдены, начинаем с нуля")
+            return None
+            
+        # Берем самый свежий
+        latest_checkpoint = checkpoint_files[0]
+        logging.info(f"🔄 Найден чекпоинт: {latest_checkpoint}, пытаемся восстановить")
+        
+        with open(latest_checkpoint, "rb") as f:
+            checkpoint_data = pickle.load(f)
+            
+        # Проверка наличия ожидаемых данных
+        required_fields = ["lots", "processed_indices", "offers_by_district", "timestamp"]
+        if not all(field in checkpoint_data for field in required_fields):
+            logging.warning("⚠️ Неполные данные в чекпоинте, начинаем с нуля")
+            return None
+            
+        # Выводим информацию о чекпоинте
+        checkpoint_age = time.time() - checkpoint_data["timestamp"]
+        logging.info(f"✅ Успешно загружен чекпоинт от {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(checkpoint_data['timestamp']))}")
+        logging.info(f"📊 В чекпоинте: {len(checkpoint_data.get('lots', []))} лотов, "
+                    f"{len(checkpoint_data.get('processed_indices', []))} обработано, "
+                    f"{len(checkpoint_data.get('offers_by_district', {}))} районов, "
+                    f"{len(checkpoint_data.get('all_sale_offers', []))} объявлений о продаже, "
+                    f"{len(checkpoint_data.get('all_rent_offers', []))} объявлений об аренде")
+        
+        return checkpoint_data
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка при загрузке чекпоинта: {e}")
+        return None
+
+def save_progress_checkpoint(lots, processed_indices, offers_by_district, district_offer_count, all_sale_offers=None, all_rent_offers=None):
+    """Сохраняет текущий прогресс в файл для возможного восстановления."""
+    try:
+        checkpoint_file = f"checkpoint_{int(time.time())}.pkl"
+        with open(checkpoint_file, "wb") as f:
+            pickle.dump({
+                "lots": lots,
+                "processed_indices": processed_indices,
+                "offers_by_district": offers_by_district,
+                "district_offer_count": district_offer_count,
+                "all_sale_offers": all_sale_offers or [],
+                "all_rent_offers": all_rent_offers or [],
+                "timestamp": time.time()
+            }, f)
+        logging.info(f"💾 Создан чекпойнт: {checkpoint_file}")
+        
+        # Удаляем старые чекпойнты, оставляя только 3 последних
+        checkpoint_files = sorted(
+            [f for f in os.listdir(".") if f.startswith("checkpoint_")],
+            key=lambda x: os.path.getmtime(x),
+            reverse=True
+        )
+        
+        for old_file in checkpoint_files[3:]:
+            try:
+                os.remove(old_file)
+                logging.debug(f"Удален устаревший чекпойнт: {old_file}")
+            except:
+                pass
+                
+    except Exception as e:
+        logging.error(f"❌ Ошибка при создании чекпойнта: {e}")
+
 def calculate_profitability(lot: Lot, median_prices: Dict[str, float]) -> float:
     """Calculate profitability as (median market price - auction price) / median market price."""
     if not lot.district or lot.district not in median_prices or lot.area <= 0:
@@ -110,27 +187,74 @@ def calculate_profitability(lot: Lot, median_prices: Dict[str, float]) -> float:
 
 async def main():
     try:
-        lots = await fetch_lots(max_pages=2)
-        logging.info("Got %d lots", len(lots))
-
+       # Проверяем аргументы командной строки для возобновления
+        import sys
+        resume_from_checkpoint = "--resume" in sys.argv
+        
+        # Инициализируем базовые переменные
+        browser_operations = 0
+        browser_refresh_interval = CONFIG.get("browser_refresh_interval", 20)
+        lot_save_interval = CONFIG.get("lot_save_interval", 5)
+        
+        if resume_from_checkpoint:
+            # Пытаемся загрузить чекпоинт
+            checkpoint = load_checkpoint()
+            
+            if checkpoint:
+                # Восстанавливаем состояние
+                lots = checkpoint.get("lots", [])
+                processed_indices = set(checkpoint.get("processed_indices", []))
+                offers_by_district = defaultdict(list, checkpoint.get("offers_by_district", {}))
+                district_offer_count = defaultdict(int, checkpoint.get("district_offer_count", {}))
+                all_sale_offers = checkpoint.get("all_sale_offers", [])
+                all_rent_offers = checkpoint.get("all_rent_offers", [])
+                processed_lots = [lots[i] for i in processed_indices if i < len(lots)]
+                
+                # Определяем, с какого индекса продолжить
+                start_idx = max(processed_indices) + 1 if processed_indices else 0
+                logging.info(f"🔄 Возобновляем обработку с лота #{start_idx+1} из {len(lots)}")
+                
+                # Информация о восстановленных данных
+                logging.info(f"📊 Восстановлены данные: {len(all_sale_offers)} объявлений о продаже, {len(all_rent_offers)} объявлений об аренде")
+            else:
+                # Не удалось восстановить, начинаем с нуля
+                logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
+                lots = await fetch_lots(max_pages=2)
+                processed_indices = set()
+                offers_by_district = defaultdict(list)
+                district_offer_count = defaultdict(int)
+                all_sale_offers = []
+                all_rent_offers = []
+                processed_lots = []
+                start_idx = 0
+        else:
+            # Начинаем с нуля
+            logging.info("🔄 Запускаем обработку с нуля (без восстановления)")
+            lots = await fetch_lots(max_pages=2)
+            processed_indices = set()
+            offers_by_district = defaultdict(list)
+            district_offer_count = defaultdict(int)
+            all_sale_offers = []
+            all_rent_offers = []
+            processed_lots = []
+            start_idx = 0
+        
+        logging.info(f"✅ Получено {len(lots)} лотов для обработки")
+        
         # Проверка работоспособности CIAN-парсера
         cian_metrics = get_cian_metrics()
         logging.info(f"Статус CIAN-парсера: {cian_metrics}")
         
-        offers_by_district = defaultdict(list)
-        district_offer_count = defaultdict(int)
         total_sale_offers = 0
         total_rent_offers = 0
         batch_size = 3
         current_batch_sale = []
         current_batch_rent = []
         
-        # Получаем радиус поиска из конфигурации
-        search_radius = CONFIG.get("area_search_radius", 5)  # По умолчанию 5 км
-        debug_radius = CONFIG.get("debug_search_radius", None)  # Добавьте этот ключ в config.py, например "debug_search_radius": 100
-        
-        for i, lot in enumerate(lots, 1):
+        # Основной цикл обработки лотов, начиная с start_idx
+        for i in range(start_idx, len(lots)):
             try:
+                lot = lots[i]
                 lot.district = calculate_district(lot.address)
                 logger.info(f"Lot {lot.id} is in district: {lot.district}")
                 
@@ -141,7 +265,20 @@ async def main():
                 # Получаем все объявления из района
                 sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot_uuid)
                 logging.info(f"Получено {len(sale_offers)} объявлений о продаже и {len(rent_offers)} объявлений об аренде")
-                
+
+                # Инкрементируем счетчик операций браузера
+                browser_operations += 1
+                if browser_operations >= browser_refresh_interval:
+                    logging.info(f"🔄 Перезагрузка браузера после {browser_operations} операций")
+                    try:
+                        parser = get_parser()
+                        parser.refresh_session()
+                        browser_operations = 0
+                        logging.info("✅ Браузер успешно перезагружен")
+                    except Exception as browser_error:
+                        logging.error(f"❌ Ошибка при перезагрузке браузера: {browser_error}")
+
+
                 # Дополнительная проверка для отладки
                 if not sale_offers and not rent_offers:
                     logging.warning(f"⚠️ Не получено ни одного объявления для лота {lot.id} (адрес: {lot.address})")
@@ -210,6 +347,45 @@ async def main():
                 
                 total_sale_offers += len(filtered_sale_offers)
                 total_rent_offers += len(filtered_rent_offers)
+
+                processed_lots.append(lot)
+                all_sale_offers.extend(filtered_sale_offers)
+                all_rent_offers.extend(filtered_rent_offers)
+                # Добавить промежуточное сохранение лотов
+                if i % lot_save_interval == 0:
+                    lots_to_save = processed_lots.copy()
+                    logging.info(f"💾 Промежуточное сохранение {len(lots_to_save)} лотов")
+
+                    if all_sale_offers:
+                        logging.info(f"💾 Промежуточное сохранение {len(all_sale_offers)} объявлений о продаже")
+                        try:
+                            push_offers(f"cian_sale_part{i//lot_save_interval}", all_sale_offers)
+                            logging.info(f"✅ Промежуточно сохранено {len(all_sale_offers)} объявлений о продаже")
+                        except Exception as save_error:
+                            logging.error(f"❌ Ошибка при промежуточном сохранении объявлений о продаже: {save_error}")
+                    
+                    if all_rent_offers:
+                        logging.info(f"💾 Промежуточное сохранение {len(all_rent_offers)} объявлений об аренде")
+                        try:
+                            push_offers(f"cian_rent_part{i//lot_save_interval}", all_rent_offers)
+                            logging.info(f"✅ Промежуточно сохранено {len(all_rent_offers)} объявлений об аренде")
+                        except Exception as save_error:
+                            logging.error(f"❌ Ошибка при промежуточном сохранении объявлений об аренде: {save_error}")
+
+                    try:
+                        push_lots(lots_to_save, sheet_suffix=f"_part{i//lot_save_interval}")
+                        logging.info(f"✅ Промежуточно сохранено {len(lots_to_save)} лотов")
+                    except Exception as save_error:
+                        logging.error(f"❌ Ошибка при промежуточном сохранении лотов: {save_error}")
+                
+                save_progress_checkpoint(
+                    lots=lots,
+                    processed_indices=list(range(i)),
+                    offers_by_district=dict(offers_by_district),
+                    district_offer_count=dict(district_offer_count),
+                    all_sale_offers=all_sale_offers,  # Добавляем все объявления
+                    all_rent_offers=all_rent_offers   # в чекпоинт
+                )
                 
                 # Добавим паузу между обработкой лотов, чтобы уменьшить нагрузку
                 await asyncio.sleep(1)
