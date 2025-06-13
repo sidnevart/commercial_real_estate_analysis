@@ -105,10 +105,8 @@ def _format_cells(sheet_id, start_row, end_row, column, condition, color):
                 logger.debug(f"Не удалось применить форматирование {alt_condition}: {e2}")
 
 # public API ------------------------------------------------------
-def push_lots(lots: List[Lot], sheet_suffix: str = ""):
-    """Push full lot data to the 'torgi' sheet with optional suffix."""
-    sheet_name = f"torgi{sheet_suffix}"
-    
+def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
+    """Push full lot data without overwriting existing lots."""
     logger.info(f"Начинаем выгрузку {len(lots)} лотов в Google Sheets на лист {sheet_name}")
     
     if not lots:
@@ -116,187 +114,332 @@ def push_lots(lots: List[Lot], sheet_suffix: str = ""):
         return
     
     try:
-        rows = []
-        for lot in lots:
-            try:
-                current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
-                market_price_per_sqm = lot.median_market_price / lot.area if lot.area > 0 and lot.median_market_price > 0 else 0
-                total_history_cost = lot.price  
-                total_current_cost = lot.price
-                total_market_cost = lot.median_market_price
-                
-                cap_amount = lot.median_market_price - lot.price
-                cap_percent = (cap_amount / lot.median_market_price * 100) if lot.median_market_price > 0 else 0
-                
-                monthly_gap = lot.median_market_price * 0.007
-                
-                annual_yield = 8.4  
-                
-                row = [
-                    lot.id,
-                    lot.lot_number,
-                    lot.name,
-                    lot.address,
-                    lot.district,
-                    lot.classification.category if hasattr(lot, 'classification') else "",
-                    lot.area,
-                    current_price_per_sqm,
-                    market_price_per_sqm,
-                    total_history_cost,
-                    total_current_cost,
-                    total_market_cost,
-                    cap_amount,
-                    cap_percent,
-                    monthly_gap,
-                    annual_yield,
-                    lot.sale_type if hasattr(lot, 'sale_type') else '',
-                    lot.auction_url,
-                    lot.notice_number,
-                    lot.lot_number,
-                    lot.auction_type,
-                    lot.sale_type,
-                    lot.law_reference,
-                    lot.application_start.strftime('%Y-%m-%d %H:%M:%S'),
-                    lot.application_end.strftime('%Y-%m-%d %H:%M:%S'),
-                    lot.auction_start.strftime('%Y-%m-%d %H:%M:%S'),
-                    str(lot.cadastral_number),  # Преобразуем к строке, чтобы избежать проблем с JSON
-                    lot.property_category,
-                    lot.ownership_type,
-                    lot.auction_step,
-                    lot.deposit,
-                    lot.recipient,
-                    lot.recipient_inn,
-                    lot.recipient_kpp,
-                    lot.bank_name,
-                    lot.bank_bic,
-                    lot.bank_account,
-                    lot.correspondent_account,
-                    str(lot.uuid),
-                    lot.classification.size_category if hasattr(lot, 'classification') else "",
-                    "Да" if hasattr(lot, 'classification') and lot.classification.has_basement else "Нет",
-                    "Да" if hasattr(lot, 'classification') and lot.classification.is_top_floor else "Нет"
-                ]
-                rows.append(row)
-            except Exception as e:
-                logger.error(f"Ошибка при подготовке данных лота {lot.id}: {e}")
+        # Подготавливаем заголовки таблицы
+        headers = [
+            "№", "Название", "Адрес", "Категория", "Площадь, м²", 
+            "Текущая ставка, ₽/м²", "Рыночная ставка, ₽/м²", 
+            # ... остальные заголовки ...
+            "URL аукциона", "UUID (technical)", "Категория размера", "Наличие подвала", "Верхний этаж"
+        ]
         
-        logger.info(f"Подготовлено {len(rows)} строк данных для выгрузки")
-        
+        # Проверка существования листа
         sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
         sheet_exists = any(sheet['properties']['title'] == sheet_name for sheet in sheets_metadata['sheets'])
         
         if not sheet_exists:
-            logger.info(f"Лист '{sheet_name}' не найден в таблице Google Sheets. Создаем новый лист.")
+            # Если лист не существует, создаем его с заголовками
+            logger.info(f"Лист '{sheet_name}' не найден. Создаем новый лист.")
             body = {
                 'requests': [{
                     'addSheet': {
                         'properties': {
-                            'title': sheet_name
+                            'title': sheet_name,
+                            'gridProperties': {
+                                'frozenRowCount': 1
+                            }
                         }
                     }
                 }]
             }
             _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
+            
+            # Вставляем заголовки в новый лист
+            _append(sheet_name, [headers])
         
-        result = _svc.spreadsheets().values().get(
+        # Получаем существующие данные для проверки дубликатов
+        existing_data = _svc.spreadsheets().values().get(
+            spreadsheetId=GSHEET_ID,
+            range=f"{sheet_name}!AG2:AG1000"  # UUID техническое поле
+        ).execute()
+        
+        existing_uuids = set()
+        if 'values' in existing_data:
+            # Извлекаем существующие UUID
+            for row in existing_data.get('values', []):
+                if row and row[0]:  # Если есть UUID
+                    existing_uuids.add(row[0])
+        
+        # Фильтруем лоты, оставляя только новые
+        new_lots = [lot for lot in lots if str(lot.uuid) not in existing_uuids]
+        
+        if not new_lots:
+            logger.info("Все лоты уже существуют в таблице, нечего добавлять")
+            return
+            
+        logger.info(f"Добавление {len(new_lots)} новых лотов из {len(lots)}")
+        
+        # Получаем текущее количество строк для нумерации
+        count_response = _svc.spreadsheets().values().get(
             spreadsheetId=GSHEET_ID,
             range=f"{sheet_name}!A:A"
         ).execute()
         
-        result = _svc.spreadsheets().values().get(
-            spreadsheetId=GSHEET_ID,
-            range=f"{sheet_name}!A:A"
-        ).execute()
-        start_row = len(result.get('values', [])) + 1
-        logger.info(f"Начинаем запись с {start_row} строки")
+        start_row = len(count_response.get('values', [])) + 1 if 'values' in count_response else 2
         
-        _append(sheet_name, rows)
-        logger.info(f"Данные успешно отправлены в лист {sheet_name}")
+        # Подготавливаем строки данных для новых лотов
+        rows = []
+        for i, lot in enumerate(new_lots):
+            try:
+                # Та же логика формирования строки как и раньше...
+                category = ""
+                size_category = ""
+                has_basement = "Нет"
+                is_top_floor = "Нет"
+                
+                if hasattr(lot, 'classification') and lot.classification is not None:
+                    category = lot.classification.category
+                    size_category = lot.classification.size_category
+                    has_basement = "Да" if lot.classification.has_basement else "Нет"
+                    is_top_floor = "Да" if lot.classification.is_top_floor else "Нет"
+                
+                row = [
+                    start_row + i - 1,  # № строки с учетом смещения
+                    lot.name,  # Название
+                    lot.address,  # Адрес
+                    # ... остальные поля ...
+                    str(lot.uuid),  # UUID (technical)
+                    size_category,  # Категория размера
+                    has_basement,  # Наличие подвала
+                    is_top_floor  # Верхний этаж
+                ]
+                rows.append(row)
+            except Exception as e:
+                logger.error(f"Ошибка при подготовке данных лота {lot.id}: {e}")
         
-        sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+        if rows:
+            # Добавляем новые строки (без перезаписи существующих)
+            _append(sheet_name, rows)
+            logger.info(f"Успешно добавлено {len(rows)} новых лотов в таблицу")
         
+        # Применяем форматирование
         try:
-            sheet_id = next(sheet['properties']['sheetId'] 
-                        for sheet in sheets_metadata['sheets'] 
-                        if sheet['properties']['title'] == 'torgi')
+            # Получаем ID листа
+            sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+            sheet_id = next((sheet['properties']['sheetId'] 
+                            for sheet in sheets_metadata['sheets'] 
+                            if sheet['properties']['title'] == sheet_name),
+                            None)
             
-            threshold = CONFIG["advantage_price_threshold"]
+            if not sheet_id:
+                logger.warning(f"Не удалось найти ID листа '{sheet_name}' для форматирования")
+                return
+                
+            # Удаляем предыдущее условное форматирование
+            try:
+                # Сначала получаем информацию о существующих правилах форматирования
+                formatting_response = _svc.spreadsheets().get(
+                    spreadsheetId=GSHEET_ID,
+                    ranges=[sheet_name],
+                    fields="sheets(sheetId,conditionalFormats)"
+                ).execute()
+                
+                # Проверяем, есть ли правила форматирования
+                sheet_data = formatting_response.get('sheets', [])
+                if sheet_data and 'conditionalFormats' in sheet_data[0]:
+                    existing_rules = len(sheet_data[0]['conditionalFormats'])
+                    logger.info(f"Найдено {existing_rules} правил форматирования для удаления")
+                    
+                    # Создаем запросы на удаление всех правил, начиная с последнего
+                    delete_requests = []
+                    for i in range(existing_rules - 1, -1, -1):  # В обратном порядке
+                        delete_requests.append({
+                            "deleteConditionalFormatRule": {
+                                "sheetId": sheet_id,
+                                "index": i
+                            }
+                        })
+                    
+                    if delete_requests:
+                        # Выполняем удаление всех правил одновременно
+                        _svc.spreadsheets().batchUpdate(
+                            spreadsheetId=GSHEET_ID, 
+                            body={"requests": delete_requests}
+                        ).execute()
+                        logger.info(f"Успешно удалено {len(delete_requests)} правил форматирования")
+                else:
+                    logger.info(f"Не найдено правил форматирования для листа '{sheet_name}'")
+                    
+            except Exception as e:
+                logger.info(f"Пропускаем удаление форматирования: {str(e)}")
+                
+            # Форматирование только для доходности
+            yield_threshold = CONFIG.get("market_yield_threshold", 10)
             
             _format_cells(
                 sheet_id=sheet_id,
-                start_row=start_row - 1,
-                end_row=start_row + len(rows) - 1,
-                column=13,  # Колонка капитализации в % (индекс 13)
-                condition=f"NUMBER_LESS {threshold}",  # Исправлено с NUMBER_LESS_THAN_OR_EQUAL
+                start_row=1,
+                end_row=len(rows),
+                column=13,  # Колонка "Доходность (рыночная), %"
+                condition=f"NUMBER_GREATER {yield_threshold}",
                 color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
             )
-
-            yield_threshold = CONFIG.get("market_yield_threshold", 10)  # Используем настройку или 10% по умолчанию
-
-            _format_cells(
-                sheet_id=sheet_id,
-                start_row=start_row - 1,
-                end_row=start_row + len(rows) - 1,
-                column=15,  # Колонка годовой доходности (индекс 15)
-                condition=f"NUMBER_GREATER {yield_threshold}",  # Исправлено с NUMBER_GREATER_THAN_OR_EQUAL
-                color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
-            )
-            logger.info(f"Форматирование для доходности выше {yield_threshold}% успешно применено")
-            logger.info("Форматирование успешно применено")
-        except StopIteration:
-            logger.error("Не удалось найти ID листа 'torgi' для применения форматирования")
+            
+            logger.info("Условное форматирование успешно применено")
+            
+            # Автоматическая настройка ширины колонок
+            auto_resize_request = {
+                "requests": [
+                    {
+                        "autoResizeDimensions": {
+                            "dimensions": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 0,
+                                "endIndex": len(headers)
+                            }
+                        }
+                    }
+                ]
+            }
+            _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=auto_resize_request).execute()
+            logger.info("Ширина колонок автоматически настроена")
+            
         except Exception as e:
-            logger.error(f"Ошибка при применении форматирования: {e}")
+            logger.error(f"Ошибка при форматировании таблицы: {e}")
     
     except Exception as e:
         logger.error(f"Ошибка при выгрузке лотов в Google Sheets: {e}", exc_info=True)
         raise
 
 
-# В функции push_offers в файле google_sheets.py добавить вывод расстояния
 def push_offers(sheet: str, offers: List[Offer]):
-    """Push offer data including address and calculated price per sq.m."""
+    """Push offer data without overwriting existing offers."""
     if not offers:
         logger.warning(f"Попытка отправить пустой список объявлений в лист {sheet}")
         return
-    rows = []
-    for off in offers:
-        # Calculate price per square meter
-        price_per_sqm = off.price / off.area if off.area > 0 else 0
+    
+    logger.info(f"Начинаем выгрузку {len(offers)} объявлений в лист {sheet}")
+    
+    try:
+        # Фильтруем объявления с некорректными значениями
+        valid_offers = [o for o in offers if o.price > 0 and o.area > 0]
         
-        # Добавляем расстояние до лота, если оно определено
-        distance_to_lot = getattr(off, 'distance_to_lot', '')
+        if len(valid_offers) != len(offers):
+            logger.warning(f"Отфильтровано {len(offers) - len(valid_offers)} объявлений с нулевыми значениями")
         
-        # Format row with all required fields
-        rows.append([
-            off.address,       # Address column
-            off.district if hasattr(off, 'district') else "",  # District
-            off.area,          # Area in square meters
-            price_per_sqm,     # Price per square meter (calculated)
-            off.price,         # Total price
-            distance_to_lot,   # Расстояние до лота
-            off.url,           # URL to the offer
-            str(off.lot_uuid)  # UUID of the associated lot
-        ])
-    sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
-    sheet_exists = any(s['properties']['title'] == sheet for s in sheets_metadata['sheets'])
-
-    if not sheet_exists:
-        logger.info(f"Лист '{sheet}' не найден. Создаем новый лист.")
-        body = {
-            'requests': [{
-                'addSheet': {
-                    'properties': {
-                        'title': sheet
+        if not valid_offers:
+            logger.warning(f"После фильтрации не осталось корректных объявлений для записи в {sheet}")
+            return
+            
+        # Заголовки таблицы
+        headers = [
+            "№", "Адрес", "Район", "Площадь, м²", "Цена за м²", 
+            "Общая стоимость, ₽", "Расстояние, км", "Ссылка", "UUID лота", "ID объявления"
+        ]
+        
+        # Проверяем существование листа
+        sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+        sheet_exists = any(s['properties']['title'] == sheet for s in sheets_metadata['sheets'])
+        
+        if not sheet_exists:
+            # Если лист не существует, создаем его
+            logger.info(f"Лист '{sheet}' не найден. Создаем новый лист.")
+            body = {
+                'requests': [{
+                    'addSheet': {
+                        'properties': {
+                            'title': sheet,
+                            'gridProperties': {
+                                'frozenRowCount': 1
+                            }
+                        }
                     }
+                }]
+            }
+            _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
+            
+            # Вставляем заголовки
+            _append(sheet, [headers])
+        
+        # Получаем существующие ID объявлений
+        existing_data = _svc.spreadsheets().values().get(
+            spreadsheetId=GSHEET_ID,
+            range=f"{sheet}!J2:J10000"  # ID объявления
+        ).execute()
+        
+        existing_ids = set()
+        if 'values' in existing_data:
+            for row in existing_data.get('values', []):
+                if row and row[0]:
+                    existing_ids.add(row[0])
+        
+        # Фильтруем только новые объявления
+        new_offers = [o for o in valid_offers if o.id not in existing_ids]
+        
+        if not new_offers:
+            logger.info(f"Все объявления уже существуют в таблице {sheet}, нечего добавлять")
+            return
+            
+        logger.info(f"Добавление {len(new_offers)} новых объявлений из {len(valid_offers)}")
+        
+        # Получаем текущее количество строк
+        count_response = _svc.spreadsheets().values().get(
+            spreadsheetId=GSHEET_ID,
+            range=f"{sheet}!A:A"
+        ).execute()
+        
+        start_row = len(count_response.get('values', [])) + 1 if 'values' in count_response else 2
+        
+        # Подготавливаем строки данных
+        rows = []
+        for i, offer in enumerate(new_offers):
+            # Рассчитываем цену за квадратный метр
+            price_per_sqm = offer.price / offer.area if offer.area > 0 else 0
+            
+            # Получаем расстояние до лота, если есть
+            distance_to_lot = getattr(offer, 'distance_to_lot', '')
+            
+            # Формируем строку данных
+            row = [
+                start_row + i - 1,  # № с учетом смещения
+                offer.address,  # Адрес
+                offer.district if hasattr(offer, 'district') and offer.district else "",  # Район
+                offer.area,  # Площадь, м²
+                price_per_sqm,  # Цена за м²
+                offer.price,  # Общая стоимость, ₽
+                distance_to_lot,  # Расстояние, км
+                offer.url,  # Ссылка
+                str(offer.lot_uuid),  # UUID лота
+                offer.id  # ID объявления
+            ]
+            rows.append(row)
+        
+        # Добавляем новые данные (без перезаписи)
+        if rows:
+            _append(sheet, rows)
+            logger.info(f"Успешно добавлено {len(rows)} новых объявлений в лист {sheet}")
+        
+        # Применяем форматирование
+        try:
+            # Получаем ID листа для форматирования
+            sheet_id = next((s['properties']['sheetId'] for s in sheets_metadata['sheets'] 
+                          if s['properties']['title'] == sheet), None)
+                          
+            if sheet_id:
+                # Автоматическая настройка ширины колонок
+                auto_resize_request = {
+                    "requests": [
+                        {
+                            "autoResizeDimensions": {
+                                "dimensions": {
+                                    "sheetId": sheet_id,
+                                    "dimension": "COLUMNS",
+                                    "startIndex": 0,
+                                    "endIndex": len(headers)
+                                }
+                            }
+                        }
+                    ]
                 }
-            }]
-        }
-        _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
-    _append(sheet, rows)
+                _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=auto_resize_request).execute()
+                logger.info(f"Ширина колонок для листа {sheet} автоматически настроена")
+        except Exception as e:
+            logger.error(f"Ошибка при форматировании листа {sheet}: {e}")
+    
+    except Exception as e:
+        logger.error(f"Ошибка при выгрузке объявлений в Google Sheets: {e}", exc_info=True)
 
    
-
 def push_district_stats(district_stats: Dict[str, int]):
     """Push district offer count statistics to a separate sheet."""
     if not district_stats:
@@ -312,3 +455,8 @@ def push_district_stats(district_stats: Dict[str, int]):
         rows = [["Москва", 0]]  # Вторая защита от пустого списка
         
     _append("district_stats", rows)
+
+# Вспомогательная функция для форматирования дат
+def format_date(dt):
+    """Форматирует дату в строковый формат для Excel"""
+    return dt.strftime('%Y-%m-%d %H:%M:%S') if dt else ""

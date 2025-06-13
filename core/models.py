@@ -45,6 +45,21 @@ class Lot:
     median_market_price: float = 0.0  
     profitability: float = 0.0  
     classification: PropertyClassification = field(default_factory=PropertyClassification)
+    
+    # Добавляем новые поля для финансовых метрик
+    market_price_per_sqm: float = 0.0
+    current_price_per_sqm: float = 0.0
+    market_value: float = 0.0
+    capitalization_rub: float = 0.0
+    capitalization_percent: float = 0.0
+    monthly_gap: float = 0.0
+    annual_yield_percent: float = 0.0
+    annual_income: float = 0.0
+    average_rent_price_per_sqm: float = 0.0
+    has_rent_data: bool = False
+
+    sale_data: List[float] = field(default_factory=list)
+    rent_data: List[float] = field(default_factory=list)
 
 @dataclass(slots=True)
 class Offer:

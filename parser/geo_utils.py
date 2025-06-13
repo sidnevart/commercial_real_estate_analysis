@@ -16,6 +16,34 @@ DGIS_API_KEY = os.getenv("DGIS_API_KEY", "rutnpt3272")
 DGIS_GEOCODE_API = "https://catalog.api.2gis.com/3.0/items/geocode"
 DGIS_DISTANCE_API = "https://routing.api.2gis.com/get_dist_matrix"
 
+
+# В parser/geo_utils.py добавляем надежную функцию расчета расстояний
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Рассчитывает расстояние между двумя точками на Земле (в километрах).
+    Использует формулу гаверсинуса для сферической тригонометрии.
+    """
+    # Радиус Земли в километрах
+    R = 6371.0
+    
+    # Конвертируем координаты из градусов в радианы
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+    
+    # Разницы координат
+    dlon = lon2_rad - lon1_rad
+    dlat = lat2_rad - lat1_rad
+    
+    # Формула гаверсинуса
+    a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    distance = R * c
+    
+    return distance
+
 async def get_coords_by_address(address: str) -> Optional[Tuple[float, float]]:
     """
     Получение координат по адресу через API 2GIS.
@@ -76,51 +104,6 @@ async def get_coords_by_address(address: str) -> Optional[Tuple[float, float]]:
         logger.error(f"❌ Ошибка при получении координат для '{clean_address}': {str(e)}")
         return None
 
-def haversine_distance(coord1: Tuple[float, float], coord2: Tuple[float, float]) -> float:
-    """
-    Расчет прямого расстояния между двумя точками без использования API.
-    
-    coord1, coord2: Кортежи (долгота, широта)
-    Возвращает расстояние в километрах.
-    """
-    # Радиус Земли в км
-    R = 6371.0
-    
-    # Проверка на корректность координат
-    if not all(isinstance(c, (int, float)) for c in coord1 + coord2):
-        logger.error(f"Некорректный формат координат: coord1={coord1}, coord2={coord2}")
-        # Преобразуем строки в числа, если это возможно
-        try:
-            coord1 = (float(coord1[0]), float(coord1[1]))
-            coord2 = (float(coord2[0]), float(coord2[1]))
-        except (ValueError, TypeError):
-            logger.error("Невозможно преобразовать координаты в числа")
-            return float('inf')
-    
-    # Убедимся, что долгота и широта в правильном диапазоне
-    if not (-90 <= float(coord1[1]) <= 90 or -90 <= float(coord2[1]) <= 90):
-        logger.warning(f"⚠️ Возможно перепутаны широта и долгота: coord1={coord1}, coord2={coord2}")
-        # Попробуем поменять местами широту и долготу
-        if -90 <= float(coord1[0]) <= 90 and -90 <= float(coord2[0]) <= 90:
-            logger.info("Меняем местами широту и долготу")
-            coord1 = (coord1[1], coord1[0])
-            coord2 = (coord2[1], coord2[0])
-    
-    # Переводим координаты из градусов в радианы
-    lon1, lat1 = math.radians(float(coord1[0])), math.radians(float(coord1[1]))
-    lon2, lat2 = math.radians(float(coord2[0])), math.radians(float(coord2[1]))
-    
-    # Разница координат
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    
-    # Формула гаверсинуса
-    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    distance = R * c
-    
-    logger.debug(f"Расстояние по формуле гаверсинуса: {distance:.2f} км")
-    return distance
 
 # Обновляем функцию calculate_distance для лучшей обработки ошибок
 async def calculate_distance(source_coords: Tuple[float, float], 

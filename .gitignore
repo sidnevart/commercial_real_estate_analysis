@@ -2,3 +2,5 @@
 /google-auth
 .env
 proxies.txt
+/cian_debug_logs
+.DS_Store

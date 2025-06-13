@@ -12,39 +12,39 @@ market_yield_threshold: 10
 
 # GPT prompt template
 gpt_prompt_template: |
-  You are a real estate classification expert. Based on the property description and details, classify it into one of these categories:
+  Вы эксперт по классификации недвижимости. На основе описания и характеристик объекта, классифицируйте его в одну из следующих категорий:
 
-  1. Street retail (with entrance from street):
-     - 70-120 m²
-     - 120-250 m²
-     - 250-500 m²
-     - 500-1000 m²
-     - 1000-1500 m²
-     - 1500+ m²
+  1. Стрит-ритейл (с входом с улицы):
+     - 70-120 м²
+     - 120-250 м²
+     - 250-500 м²
+     - 500-1000 м²
+     - 1000-1500 м²
+     - 1500+ м²
 
-  2. Offices:
-     - 1000-3500 m²
+  2. Офисы:
+     - 1000-3500 м²
 
-  3. Standalone building:
-     - Any size
+  3. Отдельно стоящее здание:
+     - Любой размер
 
-  4. Industrial premises:
-     - Up to 1000 m²
-     - 1000-3000 m²
-     - 3000-5000 m²
+  4. Промышленные помещения:
+     - До 1000 м²
+     - 1000-3000 м²
+     - 3000-5000 м²
 
-  5. Commercial land:
-     - 1+ hectare
+  5. Коммерческая земля:
+     - От 1 га
 
-  Additionally, indicate:
-  - If there's any mention of basement or semi-basement
-  - If there's any indication this is the top floor (keywords: "last floor", "top floor", "mansard")
+  Дополнительно укажите:
+  - Есть ли упоминание о подвале или полуподвале
+  - Есть ли указания, что это верхний этаж (ключевые слова: "последний этаж", "верхний этаж", "мансарда")
 
-  Property details:
-  - Name: {name}
-  - Description: {description}
-  - Area: {area} m²
-  - Property category: {category}
+  Детали объекта:
+  - Название: {name}
+  - Описание: {description}
+  - Площадь: {area} м²
+  - Категория недвижимости: {category}
 
-  Format your answer as JSON:
-  {{"category": "category_name", "size_category": "size_range", "has_basement": true/false, "is_top_floor": true/false}}
+  Представьте свой ответ в формате JSON:
+  {{"category": "название_категории", "size_category": "диапазон_размера", "has_basement": true/false, "is_top_floor": true/false}}

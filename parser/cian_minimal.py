@@ -66,13 +66,10 @@ def refresh_session(self):
             current_cookies = self.driver.get_cookies()
             self.driver.quit()
             
-        # Короткая пауза
         time.sleep(3)
         
-        # Реинициализация драйвера
         self.initialize_driver()
         
-        # Восстанавливаем куки если возможно
         if hasattr(self, 'driver') and self.driver and 'current_cookies' in locals():
             self.driver.get(CIAN_MAIN_URL)
             for cookie in current_cookies:
@@ -92,13 +89,11 @@ def save_debug_info(url: str, html: str, driver=None, prefix="page"):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename_base = os.path.join(LOG_DIR, f"{prefix}_{timestamp}")
     
-    # Сохраняем HTML
     html_filename = f"{filename_base}.html"
     with open(html_filename, "w", encoding="utf-8") as f:
         f.write(f"<!-- URL: {url} -->\n{html}")
     log.info(f"Сохранен HTML в {html_filename}")
     
-    # Сохраняем скриншот, если драйвер доступен
     if driver:
         try:
             screenshot_filename = f"{filename_base}.png"
@@ -121,7 +116,6 @@ class CianParser:
         
         options = uc.ChromeOptions()
         
-        # Используем хороший случайный User-Agent от актуальных браузеров
         user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
@@ -132,40 +126,29 @@ class CianParser:
         options.add_argument(f"--user-agent={user_agent}")
         log.info(f"Используем User-Agent: {user_agent}")
         
-        # Отключаем автоматизацию
         options.add_argument("--disable-blink-features=AutomationControlled")
         
-        # Добавляем аргументы для обхода обнаружения
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--disable-notifications")
         
-        # УДАЛЕНЫ проблемные строки с add_experimental_option
-        # options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        # options.add_experimental_option("useAutomationExtension", False)
         
-        # Вместо этого используем соответствующие аргументы
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         
-        # Добавляем случайный размер окна
         width = random.randint(1200, 1600)
         height = random.randint(800, 1000)
         options.add_argument(f"--window-size={width},{height}")
         
-        # Используем стратегию загрузки страниц для ускорения - normal/eager/none
         options.page_load_strategy = "eager"
         
-        # Добавляем случайные аргументы для уникализации браузера
         if random.random() < 0.5:
             options.add_argument("--incognito")
         
         try:
-            # Используем headless=False для лучшего обхода защиты
             self.driver = uc.Chrome(options=options, headless=False)
             self.driver.set_page_load_timeout(60)
             
-            # Добавляем JavaScript для маскировки webdriver
             self.driver.execute_script("""
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => false,
@@ -177,7 +160,6 @@ class CianParser:
             delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
             """)
             
-            # Открываем несколько популярных сайтов для имитации обычного пользователя
             popular_sites = ["https://www.google.ru", "https://www.yandex.ru"]
             random.shuffle(popular_sites)
             
@@ -185,16 +167,13 @@ class CianParser:
                 self.driver.get(site)
                 time.sleep(random.uniform(2.0, 4.0))
                 
-                # Имитация скролла
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(300, 800)})")
                 time.sleep(random.uniform(1.0, 2.0))
             
-            # Открываем главную страницу и сохраняем первую вкладку
             self.driver.get(CIAN_MAIN_URL)
             time.sleep(random.uniform(3.0, 5.0))
             self.first_tab = self.driver.current_window_handle
             
-            # Добавляем куки
             common_cookies = [
                 {"name": "visited_before", "value": "true", "domain": ".cian.ru"},
                 {"name": "session_region_id", "value": "1", "domain": ".cian.ru"},
@@ -208,7 +187,6 @@ class CianParser:
                 except:
                     pass
             
-            # Имитация человеческого поведения - движение по странице, нажатия
             self.driver.execute_script(f"window.scrollBy(0, {random.randint(100, 300)})")
             time.sleep(random.uniform(0.5, 1.5))
             self.driver.execute_script(f"window.scrollBy(0, {random.randint(300, 600)})")
@@ -216,7 +194,6 @@ class CianParser:
             self.driver.execute_script(f"window.scrollBy(0, {random.randint(-200, -100)})")
             time.sleep(random.uniform(0.3, 0.7))
                 
-            # Открываем новую вкладку для работы
             self.driver.switch_to.new_window("tab")
             log.info("Драйвер Chrome успешно инициализирован с улучшенной защитой от обнаружения")
             
@@ -266,10 +243,8 @@ class CianParser:
                 log.info(f"Загрузка страницы {url} (попытка {attempt+1}/{max_attempts})")
                 self.driver.get(url)
                 
-                # Имитация человеческого поведения - случайные задержки
                 time.sleep(random.uniform(3, 5))
                 
-                # Случайно имитируем движение мыши с помощью JavaScript
                 self.driver.execute_script("""
                 var event = document.createEvent('MouseEvents');
                 event.initMouseEvent('mousemove', true, true, window, 1, 
@@ -281,19 +256,16 @@ class CianParser:
                 document.dispatchEvent(event);
                 """)
                 
-                # Добавляем случайное поведение пользователя - скроллинг
                 scroll_iterations = random.randint(2, 5)
                 for _ in range(scroll_iterations):
                     scroll_amount = random.randint(100, 500)
                     self.driver.execute_script(f"window.scrollBy(0, {scroll_amount})")
                     time.sleep(random.uniform(0.7, 1.5))
                 
-                # С небольшой вероятностью делаем скролл вверх
                 if random.random() < 0.4:
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(-300, -100)})")
                     time.sleep(random.uniform(0.5, 1.0))
                 
-                # Проверка на отложенную загрузку контента
                 try:
                     self.driver.execute_script("""
                     function isElementInViewport(el) {
@@ -322,7 +294,6 @@ class CianParser:
                 
                 html = self.driver.page_source
                 
-                # Проверяем наличие признаков блокировки 
                 blocking_markers = [
                     "временно недоступна", 
                     "captcha", 
@@ -334,28 +305,23 @@ class CianParser:
                 if any(marker in html.lower() for marker in blocking_markers):
                     log.warning(f"Обнаружены признаки блокировки на попытке {attempt+1}, обновляем сессию")
                     
-                    # Сохраняем страницу с блокировкой для анализа
                     block_page_file = os.path.join(LOG_DIR, f"block_page_{int(time.time())}.html")
                     with open(block_page_file, "w", encoding="utf-8") as f:
                         f.write(f"<!-- URL: {url} -->\n{html}")
                     
-                    # Делаем скриншот для анализа
                     screenshot_file = os.path.join(LOG_DIR, f"block_screen_{int(time.time())}.png")
                     try:
                         self.driver.save_screenshot(screenshot_file)
                     except:
                         pass
                         
-                    # Обновляем сессию
                     self.refresh_main_page()
                     
-                    # Увеличиваем задержку при обнаружении блокировки для ослабления нагрузки
-                    time.sleep(random.uniform(10, 15))  # Существенная задержка
+                    time.sleep(random.uniform(10, 15)) 
                     continue
                 
-                # Если обошли блокировку CIAN и получили страницу - сохраняем куки
                 cookies = self.driver.get_cookies()
-                if len(cookies) > 3:  # Если есть значимые куки
+                if len(cookies) > 3: 
                     cookies_file = os.path.join(LOG_DIR, "working_cookies.json")
                     try:
                         with open(cookies_file, "w") as f:
@@ -368,7 +334,7 @@ class CianParser:
             except Exception as e:
                 log.error(f"Ошибка при получении страницы {url}: {e}")
                 self.refresh_main_page()
-                time.sleep(random.uniform(5, 10))  # Увеличиваем задержку между попытками
+                time.sleep(random.uniform(5, 10)) 
         
         log.error(f"Не удалось загрузить страницу {url} после {max_attempts} попыток")
         return None
@@ -424,13 +390,12 @@ class CianParser:
         try:
             log.info(f"Анализ страницы поиска для {offer_type}: {search_url}")
             
-            # Сохраним страницу для отладки
             debug_file = os.path.join(LOG_DIR, f"search_page_{int(time.time())}.html")
             with open(debug_file, "w", encoding="utf-8") as f:
                 f.write(search_page)
             log.info(f"Сохранена страница поиска для отладки: {debug_file}")
             
-            # МЕТОД 1: Извлечение из JSON-данных в скрипте
+            # Метод 1: Извлечение из window.ca("pageview", {...})
             match = re.search(r'window\.ca\("pageview",(\{.*?\})\)', search_page)
             if match:
                 try:
@@ -441,96 +406,81 @@ class CianParser:
                             if 'id' not in product:
                                 continue
                                 
-                            # Проверка валидности ID
                             oid = str(product.get('id', ''))
                             if not oid or not isinstance(oid, str) or not oid.isdigit():
                                 log.warning(f"Некорректный ID '{oid}', генерируем новый")
-                                # Генерируем уникальный числовой ID
                                 oid = str(int(time.time() * 1000) + random.randint(1000, 9999))
                                 
-                            # Извлекаем цену
                             price = 0
                             if offer_type.startswith("sale"):
-                                # Для объявлений о продаже
                                 price_candidates = [
                                     product.get('price', 0),
                                     product.get('price', {}).get('value', 0) if isinstance(product.get('price'), dict) else 0
                                 ]
                                 price = next((p for p in price_candidates if p), 0)
                             else:
-                                # Для объявлений об аренде
                                 price_candidates = [
                                     product.get('price', 0),
                                     product.get('price', {}).get('value', 0) if isinstance(product.get('price'), dict) else 0
                                 ]
                                 price = next((p for p in price_candidates if p), 0)
                             
-                            # Извлекаем площадь
                             area = 0
                             area_str = ""
-                            # Пробуем несколько путей для получения площади
                             if 'features' in product and isinstance(product['features'], dict):
                                 area_str = product['features'].get('area', '')
                             elif 'features' in product and isinstance(product['features'], list):
-                                # Ищем характеристику с площадью
                                 for feature in product['features']:
                                     if isinstance(feature, dict) and 'name' in feature and 'м²' in feature.get('name', ''):
                                         area_str = feature.get('value', '')
                                         break
                             
-                            # Если не удалось найти по этим путям, ищем в общем описании
                             if not area_str and 'headline' in product and 'м²' in product['headline']:
                                 area_str = product['headline']
                             
-                            # Извлекаем числовое значение площади
                             if area_str:
                                 area_match = re.search(r'(\d+[.,]?\d*)\s*[мm]²', area_str.replace(' ', ''))
                                 if area_match:
                                     area = float(area_match.group(1).replace(',', '.'))
                             
-                            # Адрес
                             address = ""
                             if 'geo' in product and isinstance(product['geo'], dict):
                                 address = product['geo'].get('address', '')
                             elif 'address' in product:
                                 address = product['address']
                                 
-                            # НОВЫЙ КОД: Улучшенное извлечение местоположения
                             if not address:
                                 log.warning(f"Не найден адрес для объявления ID {oid}, пробуем альтернативные методы")
                                 
-                                # Метод 1: Поиск метро
                                 metro = ""
                                 if 'geo' in product and 'undergrounds' in product['geo'] and product['geo']['undergrounds']:
                                     metros = product['geo']['undergrounds']
-                                    if isinstance(metros, list) and metros:
+                                    if isinstance(metros, list) and metros and len(metros) > 0:
                                         if isinstance(metros[0], dict) and 'name' in metros[0]:
                                             metro = metros[0]['name']
                                         elif isinstance(metros[0], str):
                                             metro = metros[0]
                                 
-                                # Метод 2: Поиск района
                                 district = ""
                                 if 'geo' in product:
                                     if 'districtsInfo' in product['geo'] and product['geo']['districtsInfo']:
                                         districts = product['geo']['districtsInfo']
-                                        if isinstance(districts, list) and districts:
+                                        if isinstance(districts, list) and districts and len(districts) > 0:
                                             if isinstance(districts[0], dict) and 'name' in districts[0]:
                                                 district = districts[0]['name']
+                                            elif isinstance(districts[0], str):
+                                                district = districts[0]
                                     elif 'district' in product['geo']:
                                         district = product['geo']['district']
                                 
-                                # Метод 3: Поиск локации
                                 location = ""
                                 if 'geo' in product and 'locationName' in product['geo']:
                                     location = product['geo']['locationName']
                                 
-                                # Метод 4: Поиск в других полях
                                 building_address = ""
                                 if 'building' in product and 'address' in product['building']:
                                     building_address = product['building']['address']
                                 
-                                # Собираем адрес из всех найденных данных о местоположении
                                 address_parts = []
                                 if location:
                                     address_parts.append(f"Москва, {location}")
@@ -552,7 +502,6 @@ class CianParser:
                                     address = ", ".join(address_parts)
                                     log.info(f"Сформирован альтернативный адрес для {oid}: {address}")
                             
-                            # Создаем объект предложения только если есть все необходимые данные
                             if price > 0 and area > 0:
                                 offer = Offer(
                                     id=oid,
@@ -570,7 +519,7 @@ class CianParser:
                 except Exception as e:
                     log.warning(f"Ошибка при декодировании JSON-данных из скрипта: {str(e)}")
             
-            # МЕТОД 2: Извлечение из скриптов с CIAN_COMPONENT_DATA
+            # Метод 2: Извлечение из _CIAN_COMPONENT_DATA_
             scripts = re.findall(r'window\._CIAN_COMPONENT_DATA_\s*=\s*({.*?});', search_page)
             if scripts:
                 for script_text in scripts:
@@ -589,18 +538,15 @@ class CianParser:
                             try:
                                 oid = str(offer_data.get("id", 0))
                                 
-                                # Проверка валидности ID
                                 if not oid or not isinstance(oid, str) or not oid.isdigit():
                                     log.warning(f"Некорректный ID '{oid}', генерируем новый")
                                     oid = str(int(time.time() * 1000) + random.randint(1000, 9999))
                                 
-                                # Формируем URL
                                 if offer_type.startswith("sale"):
                                     href = f"https://www.cian.ru/sale/commercial/{oid}/"
                                 else:
                                     href = f"https://www.cian.ru/rent/commercial/{oid}/"
                                 
-                                # Извлекаем цену
                                 price = 0
                                 price_candidates = [
                                     offer_data.get("bargainTerms", {}).get("priceRur", 0),
@@ -610,7 +556,6 @@ class CianParser:
                                 ]
                                 price = next((p for p in price_candidates if p), 0)
                                 
-                                # Извлекаем площадь
                                 area = 0
                                 if "totalArea" in offer_data:
                                     area = float(offer_data["totalArea"])
@@ -619,18 +564,15 @@ class CianParser:
                                 elif "area" in offer_data:
                                     area = float(offer_data["area"])
                                 
-                                # Получаем адрес - УЛУЧШЕННАЯ ВЕРСИЯ
                                 address = ""
                                 if "geo" in offer_data and "address" in offer_data["geo"]:
                                     address = offer_data["geo"]["address"]
                                 elif "address" in offer_data:
                                     address = offer_data["address"]
                                 
-                                # НОВЫЙ КОД: Дополнительные методы получения адреса
                                 if not address:
                                     log.warning(f"Не найден адрес для объявления {oid}, пробуем альтернативные методы")
                                     
-                                    # Метод 1: Поиск метро
                                     metro = ""
                                     if "geo" in offer_data and "undergrounds" in offer_data["geo"]:
                                         undergrounds = offer_data["geo"]["undergrounds"]
@@ -639,23 +581,25 @@ class CianParser:
                                                 metro = undergrounds[0]["name"]
                                             elif isinstance(undergrounds[0], str):
                                                 metro = undergrounds[0]
-                                    
-                                    # Метод 2: Поиск района
+
+                                    # Извлечение района
                                     district = ""
                                     if "geo" in offer_data:
                                         if "districts" in offer_data["geo"]:
                                             districts = offer_data["geo"]["districts"]
                                             if districts and isinstance(districts, list) and len(districts) > 0:
-                                                district = districts[0]
+                                                if isinstance(districts[0], dict) and 'name' in districts[0]:
+                                                    district = districts[0]['name']
+                                                elif isinstance(districts[0], str):
+                                                    district = districts[0]
                                         elif "district" in offer_data["geo"]:
                                             district = offer_data["geo"]["district"]
-                                    
-                                    # Метод 3: Поиск локации
+
                                     location = ""
                                     if "geo" in offer_data and "locationName" in offer_data["geo"]:
                                         location = offer_data["geo"]["locationName"]
                                     
-                                    # Метод 4: Поиск полного адреса
+                                    # Проверяем альтернативные пути к адресу
                                     if "fullAddress" in offer_data:
                                         address = offer_data["fullAddress"]
                                         log.info(f"Найден адрес через fullAddress: {address}")
@@ -665,8 +609,8 @@ class CianParser:
                                     elif "building" in offer_data and "address" in offer_data["building"]:
                                         address = offer_data["building"]["address"]
                                         log.info(f"Найден адрес через building.address: {address}")
-                                    # Если все еще нет адреса, формируем его из доступных данных
                                     else:
+                                        # Формируем адрес из компонентов
                                         address_parts = []
                                         
                                         if location:
@@ -683,7 +627,7 @@ class CianParser:
                                             address = ", ".join(address_parts)
                                             log.info(f"Сформирован адрес из местоположения: {address}")
                                         else:
-                                            address = "Москва" # Минимальный адрес по умолчанию
+                                            address = "Москва" 
                                             log.warning(f"Установлен базовый адрес для {oid}: {address}")
                                 
                                 if price > 0 and area > 0:
@@ -706,7 +650,7 @@ class CianParser:
                     log.info(f"Извлечено {len(offers)} объявлений из _CIAN_COMPONENT_DATA_")
                     return offers
             
-            # МЕТОД 3: Извлечение через JavaScript в браузере
+            # Метод 3: JavaScript-извлечение
             log.info("Пытаемся извлечь данные с помощью JavaScript")
             js_offers = self.driver.execute_script("""
             try {
@@ -756,110 +700,54 @@ class CianParser:
                     return matches ? parseFloat(matches[1].replace(',', '.')) : 0;
                 }
                 
-                // НОВЫЙ КОД: Извлечение адреса или местоположения
+                // Извлечение адреса или местоположения
                 function extractLocation(card) {
-                    // Поиск адреса по селекторам
-                    const addressSelectors = [
-                        '[data-name="GeoLabel"]', 
-                        '[data-mark="AddressInfo"]',
-                        '.c-address', 
-                        '.address', 
-                        '[data-testid="address"]',
-                        '.geo-address',
-                        '.location--bKKSL',
-                        '[data-name="AddressContainer"]'
+                    // Приоритет - найти полный оригинальный адрес
+                    const fullAddressSelectors = [
+                        '[data-name="GeoLabel"]',
+                        '[data-name="AddressContainer"]', 
+                        '.address--GbMIh',
+                        '.geo-address--U0Sxb',
+                        '.address',
+                        '.location-address'
                     ];
                     
-                    let addressElement = null;
-                    for (const selector of addressSelectors) {
-                        addressElement = card.querySelector(selector);
-                        if (addressElement) break;
-                    }
-                    
-                    // Поиск метро по селекторам
-                    const metroSelectors = [
-                        '[data-name="MetroInfo"]',
-                        '[data-mark="Underground"]',
-                        '.underground-item',
-                        '.geo-undergrounds-item--TWnYV',
-                        '.underground-name',
-                        '.underground',
-                        '.c6e8ba5398--underground-name--AX1GB',
-                        '.c-underground-label'
-                    ];
-                    
-                    let metroElement = null;
-                    for (const selector of metroSelectors) {
-                        metroElement = card.querySelector(selector);
-                        if (metroElement) break;
-                    }
-                    
-                    // Поиск района
-                    const districtSelectors = [
-                        '[data-name="DistrictInfo"]',
-                        '.district-name',
-                        '.geo-location'
-                    ];
-                    
-                    let districtElement = null;
-                    for (const selector of districtSelectors) {
-                        districtElement = card.querySelector(selector);
-                        if (districtElement) break;
-                    }
-                    
-                    // Формируем адрес
-                    let address = '';
-                    
-                    if (addressElement) {
-                        address = addressElement.textContent.trim();
-                    } else {
-                        const parts = [];
-                        parts.push('Москва');
-                        
-                        if (districtElement) {
-                            const districtText = districtElement.textContent.trim();
-                            if (!districtText.toLowerCase().includes('район')) {
-                                parts.push('район ' + districtText);
-                            } else {
-                                parts.push(districtText);
-                            }
+                    // Сначала ищем полный адрес по основным селекторам
+                    for (const selector of fullAddressSelectors) {
+                        const addressElement = card.querySelector(selector);
+                        if (addressElement && addressElement.textContent.trim().length > 10) {
+                            console.log("Found full address:", addressElement.textContent.trim());
+                            return addressElement.textContent.trim();
                         }
-                        
-                        if (metroElement) {
-                            const metroText = metroElement.textContent.trim();
-                            if (!metroText.toLowerCase().includes('м.')) {
-                                parts.push('м. ' + metroText);
-                            } else {
-                                parts.push(metroText);
-                            }
-                        }
-                        
-                        address = parts.join(', ');
                     }
                     
-                    // Если все еще нет адреса, ищем в тексте страницы
-                    if (!address) {
-                        const text = card.textContent;
-                        // Ищем станцию метро
-                        const metroMatch = text.match(/(?:метро|м\.)\s+([А-Яа-я\s\-]+)/i);
-                        if (metroMatch) {
-                            address = 'Москва, м. ' + metroMatch[1].trim();
+                    // Если не нашли полный адрес - ищем метро, район и другие компоненты
+                    const metroElement = card.querySelector('[data-name="MetroInfo"], [data-mark="Underground"], .underground-item, .geo-undergrounds-item--TWnYV, .underground-name');
+                    const districtElement = card.querySelector('[data-name="DistrictInfo"], .district-name, .geo-location');
+                    
+                    // Формируем адрес из компонентов
+                    const parts = [];
+                    parts.push('Москва');
+                    
+                    if (districtElement) {
+                        const districtText = districtElement.textContent.trim();
+                        if (!districtText.toLowerCase().includes('район')) {
+                            parts.push('район ' + districtText);
                         } else {
-                            // Ищем район
-                            const districtMatch = text.match(/(?:район|р-н)\s+([А-Яа-я\s\-]+)/i);
-                            if (districtMatch) {
-                                address = 'Москва, район ' + districtMatch[1].trim();
-                            } else {
-                                // Пытаемся найти хоть что-то похожее на адрес в Москве
-                                const streetMatch = text.match(/(?:улица|ул\.|проспект|пр-т|пр\.|переулок|пер\.|площадь|пл\.)\s+([А-Яа-я\s\-]+)/i);
-                                if (streetMatch) {
-                                    address = 'Москва, ' + streetMatch[0].trim();
-                                }
-                            }
+                            parts.push(districtText);
                         }
                     }
                     
-                    return address || 'Москва'; // Возвращаем хотя бы "Москва", если ничего не нашли
+                    if (metroElement) {
+                        const metroText = metroElement.textContent.trim();
+                        if (!metroText.toLowerCase().includes('м.')) {
+                            parts.push('м. ' + metroText);
+                        } else {
+                            parts.push(metroText);
+                        }
+                    }
+                    
+                    return parts.join(', ');
                 }
                 
                 const cards = findCards();
@@ -935,7 +823,7 @@ class CianParser:
                             }
                         }
                         
-                        // Используем новую функцию извлечения адреса
+                        // Используем функцию извлечения адреса
                         const address = extractLocation(card);
                         
                         return {
@@ -959,16 +847,13 @@ class CianParser:
             if js_offers and len(js_offers) > 0:
                 log.info(f"JavaScript метод нашел {len(js_offers)} объявлений")
                 
-                # Преобразуем JS-объекты в Offer
                 for data in js_offers:
                     try:
-                        # Проверяем валидность ID
                         offer_id = data.get('id', '0')
                         if not offer_id or not isinstance(offer_id, str) or not offer_id.isdigit():
                             log.warning(f"Некорректный ID '{offer_id}', генерируем новый")
                             offer_id = str(int(time.time() * 1000) + random.randint(1000, 9999))
                         
-                        # Проверяем URL - если пустой, генерируем на основе ID
                         url = data.get('url', '')
                         if not url and offer_id:
                             if offer_type.startswith("sale"):
@@ -995,7 +880,6 @@ class CianParser:
         except Exception as e:
             log.exception(f"Ошибка при извлечении объявлений с {search_url}: {str(e)}")
         
-        # Если прямая экстракция не удалась, делаем скриншот
         try:
             screenshot_file = os.path.join(LOG_DIR, f"failed_search_{int(time.time())}.png")
             self.driver.save_screenshot(screenshot_file)
@@ -1003,30 +887,25 @@ class CianParser:
         except:
             pass
         
-        # Если все методы не дали результатов
         log.warning("Все методы извлечения данных не дали результатов")
         return []
     
     def unformatted_address_to_cian_search_filter(self, address):
         """Преобразует адрес в параметр поискового фильтра CIAN."""
         try:
-            # Стандартизация адреса
             for old, new in address_replacements.items():
                 address = address.replace(old, new)
 
-            # Быстрые проверки для часто встречающихся случаев
             if "москва" in address.lower() and "область" not in address.lower():
                 log.info("Быстро определен регион: Москва")
-                return "region=1"  # ID Москвы
+                return "region=1"  
                 
             if "область" in address.lower():
                 log.info("Быстро определен регион: Московская область")
-                return "region=4593"  # ID МО
+                return "region=4593"  
                 
-            # Геокодинг адреса
             geocoding_response = self.get_json(CIAN_GEOCODE.format(address))
             
-            # Находим подходящий элемент в ответе
             geocoding_result = None
             for item in geocoding_response.get("items", []):
                 if item.get("text", "").startswith("Россия, Моск"):
@@ -1037,34 +916,29 @@ class CianParser:
                 log.warning(f"Не найдено соответствие для адреса: {address}")
                 return "region=4593" if "область" in address.lower() else "region=1"
 
-            # Получаем координаты из результата геокодирования
             lon, lat = geocoding_result.get("coordinates", [0, 0])
                 
             if "Московская область" in geocoding_result.get("text", ""):
-                # Для Подмосковья ищем ближайший город/населенный пункт
                 for_search_result = self.post_json(
                     CIAN_GEOCODE_FOR_SEARCH,
                     {"lat": lat, "lng": lon, "kind": "locality"}
                 )
                 
                 try:
-                    # details levels structure: 0 - МО, 1 - округ/город, 2 - дальше
                     location_id = for_search_result['details'][1]['id']
                     log.info(f"Определена локация в МО с ID: {location_id}")
                     return f"location[0]={location_id}"
                 except (KeyError, IndexError):
                     log.warning(f"Не удалось определить точную локацию в МО: {address}")
-                    return "region=4593"  # Возвращаем всю МО
+                    return "region=4593" 
 
-            else:  # "Москва"
-                # Для Москвы пытаемся найти район
+            else:  
                 for_search_result = self.post_json(
                     CIAN_GEOCODE_FOR_SEARCH,
                     {"lat": lat, "lng": lon, "kind": "district"}
                 )
                 
                 try:
-                    # details levels structure: 0 - Москва, 1 - АО, 2 - "район Ховрино", 3 - дальше
                     district_name = (
                         for_search_result["details"][2]["fullName"]
                         .replace("район", "")
@@ -1079,13 +953,11 @@ class CianParser:
                 except (KeyError, IndexError):
                     pass
 
-                # Если не удалось определить район, ищем по вхождению названия района в адрес
                 for district_name, district_id in moscow_district_name_to_cian_id.items():
                     if district_name.lower() in address.lower():
                         log.info(f"Найден район в адресе: {district_name}")
                         return f"district[0]={district_id}"
 
-                # Если и это не удалось, пробуем улицу
                 try:
                     for_search_result = self.post_json(
                         CIAN_GEOCODE_FOR_SEARCH,
@@ -1098,20 +970,19 @@ class CianParser:
                     pass
 
                 log.warning(f"Не удалось определить точное местоположение в Москве для: {address}")
-                return "region=1"  # Вся Москва
+                return "region=1"  
 
         except Exception as e:
             log.exception(f"Ошибка при определении фильтра для адреса {address}: {e}")
-            return "region=1"  # По умолчанию Москва
+            return "region=1" 
     
     def extract_offer_data(self, offer_url, offer_page, lot_uuid, offer_type):
         """Извлекает данные объявления из страницы"""
         try:
-            # Ищем скрипт с данными объявления
             script_match = re.search(r'window\._cianConfig\[\'frontend-offer-card\'\]\.concat\((.*?)\);', offer_page)
             
             if not script_match:
-                log.warning(f"Не найден скрипт с данными для {offer_url}")
+                log.warning(f"Не найден скрипт с данными объявления в {offer_url}")
                 return None
                 
             json_text = script_match.group(1)
@@ -1119,34 +990,29 @@ class CianParser:
             
             state_block = next((block for block in config if "key" in block and block["key"] == "defaultState"), None)
             if not state_block:
-                log.warning(f"Не найден state_block в данных для {offer_url}")
+                log.warning(f"Не найден блок defaultState в {offer_url}")
                 return None
                 
             state = state_block["value"]
             
-            # Проверяем наличие данных объявления
             if "offerData" not in state or "offer" not in state["offerData"]:
-                log.warning(f"Нет данных offerData в {offer_url}")
+                log.warning(f"Не найдены данные объявления в {offer_url}")
                 return None
                 
             offer_data = state["offerData"]["offer"]
             
-            # Получаем площадь
             area = 0
             if "land" in offer_data:
-                # Для земельных участков
                 unit = offer_data["land"].get("areaUnitType", "")
                 raw_area = float(offer_data["land"].get("area", 0))
                 area = raw_area * (100 if unit == "sotka" else 10000 if unit == "hectare" else 1)
             else:
-                # Для помещений
                 area = float(offer_data.get("totalArea", 0))
             
             if area <= 0:
                 log.warning(f"Некорректная площадь в {offer_url}")
                 return None
             
-            # Получаем цену
             price = 0
             if offer_type.startswith("sale"):
                 price = offer_data.get("priceTotalRur", 0)
@@ -1156,19 +1022,124 @@ class CianParser:
             if price <= 0:
                 log.warning(f"Некорректная цена в {offer_url}")
                 return None
-            
-            # Получаем адрес
+                        
+            # Улучшенный механизм получения полного адреса
             address = ""
             try:
-                if "adfoxOffer" in state:
-                    address = state["adfoxOffer"]["response"]["data"]["unicomLinkParams"].get("puid14", "")
+                # Попытка получить полный адрес из данных объявления
+                if offer_data.get("address"):
+                    full_address_parts = []
+                    
+                    # Получаем регион (Москва или другой)
+                    geo_data = offer_data.get("geo", {})
+                    if "address" in geo_data:
+                        address_components = geo_data["address"]
+                        # Собираем адрес из компонентов
+                        region = next((item.get("title") for item in address_components if item.get("type") == "location"), "")
+                        if region:
+                            full_address_parts.append(region)
+                    
+                    # Добавляем район, если есть
+                    district = ""
+                    for component in offer_data.get("geo", {}).get("districtsInfo", []):
+                        if "name" in component:
+                            district = component["name"]
+                            if district:
+                                full_address_parts.append(f"район {district}")
+                                break
+                    
+                    # Добавляем улицу
+                    street = offer_data.get("address", {}).get("street", "")
+                    if street:
+                        full_address_parts.append(street)
+                    
+                    # Добавляем номер дома
+                    house_number = offer_data.get("address", {}).get("house", "")
+                    if house_number:
+                        full_address_parts.append(f"дом {house_number}")
+                    
+                    # Собираем полный адрес
+                    if full_address_parts:
+                        address = ", ".join(full_address_parts)
                 
-                if not address and "address" in offer_data:
-                    address = offer_data.get("address", "")
-            except:
-                pass
+                # Если не удалось получить адрес из данных, пробуем извлечь из DOM
+                if not address or len(address) < 10:
+                    address_js = """
+                    (function() {
+                        // Специальная функция для извлечения адреса из DOM
+                        function findAddressInText(text) {
+                            const patterns = [
+                                /г\.\s*Москва[^,]*(,\s*[^,]+){1,5}/i,
+                                /Москва[^,]*(,\s*[^,]+){1,5}/i,
+                                /г\.\s*Санкт-Петербург[^,]*(,\s*[^,]+){1,5}/i,
+                                /Санкт-Петербург[^,]*(,\s*[^,]+){1,5}/i
+                            ];
+                            
+                            for (const pattern of patterns) {
+                                const match = text.match(pattern);
+                                if (match) return match[0];
+                            }
+                            return null;
+                        }
+                        
+                        // Ищем адрес по селекторам
+                        const selectors = [
+                            '[data-name="AddressContainer"]',
+                            '[data-name="GeoLabel"]',
+                            '.address--GbMIh',
+                            '.geo-address--U0Sxb',
+                            '.address',
+                            '.location-address',
+                            '.information__address_text'
+                        ];
+                        
+                        for (const selector of selectors) {
+                            const el = document.querySelector(selector);
+                            if (el && el.textContent.trim().length > 5)
+                                return el.textContent.trim();
+                        }
+                        
+                        // Если не нашли по селекторам, ищем в тексте страницы
+                        const allText = document.body.innerText;
+                        const addressInText = findAddressInText(allText);
+                        if (addressInText) return addressInText;
+                        
+                        // Ищем метаданные на странице
+                        const metaTags = document.querySelectorAll('meta[name="description"], meta[property="og:description"]');
+                        for (const tag of metaTags) {
+                            const content = tag.getAttribute('content');
+                            if (content) {
+                                const addressInMeta = findAddressInText(content);
+                                if (addressInMeta) return addressInMeta;
+                            }
+                        }
+                        
+                        return '';
+                    })();
+                    """
+                    extracted_address = self.driver.execute_script(address_js)
+                    if extracted_address and len(extracted_address) > 10:
+                        address = extracted_address
+                        log.info(f"Извлечен адрес из DOM: {address}")
+                    
+            except Exception as e:
+                log.error(f"Ошибка извлечения адреса: {e}")
             
-            # Создаем объект объявления
+            # Гарантируем, что адрес будет заполнен
+            if not address or len(address) < 10:
+                # Используем userInput из geo
+                geo_address = offer_data.get('geo', {}).get('userInput', '')
+                if geo_address and len(geo_address) > 5:
+                    address = f"г. Москва, {geo_address}"
+                    log.info(f"Используем адрес из userInput: {address}")
+                else:
+                    # Берем город из URL и добавляем область видимости
+                    city = "Москва"
+                    if "spb." in offer_url:
+                        city = "Санкт-Петербург"
+                    address = f"г. {city}, {geo_address or 'район не определен'}"
+                    log.warning(f"Используем запасной адрес: {address}")
+            
             oid = str(offer_data.get("cianId", 0)) or offer_url.split('/')[-2]
             
             return {
@@ -1192,10 +1163,8 @@ class CianParser:
         sale_offers = []
         rent_offers = []
         
-        # Добавляем случайные параметры для обхода кэширования
         random_params = f"&ad={random.randint(1000, 9999)}&ts={int(time.time())}"
         
-        # URL-шаблоны для разных типов поиска
         url_templates = [
             (CIAN_SALE_SEARCH, "sale"),
             (CIAN_SALE_SEARCH_LAND, "sale land"),
@@ -1203,39 +1172,30 @@ class CianParser:
             (CIAN_RENT_SEARCH_LAND, "rent land")
         ]
         
-        # Для отладки начнем с начала списка, не перемешивая
-        # Иначе можно добавить random.shuffle(url_templates)
         
         for url_template, offer_type in url_templates:
             log.info(f"Обработка типа объявлений: {offer_type}")
             try:
-                # Формируем URL поиска
                 search_url = url_template.format(search_filter) + random_params
                 log.info(f"Поиск {offer_type}: {search_url}")
                 
-                # Обновляем главную страницу
                 self.refresh_main_page()
                 
-                # Получаем страницу с результатами поиска
                 search_page = self.get_page(search_url)
                 if not search_page:
                     log.warning(f"Не удалось получить страницу поиска {offer_type}")
                     continue
                 
-                # Сохраняем для отладки
                 save_debug_info(search_url, search_page, self.driver, f"search_{offer_type}")
                 
-                # Проверяем наличие результатов
                 if "по вашему запросу ничего не найдено" in search_page.lower():
                     log.info(f"Нет результатов для {offer_type}")
                     continue
                 
-                # Пытаемся извлечь объявления напрямую со страницы поиска
                 extracted_offers = self.extract_offers_from_search_page(
                     search_page, search_url, lot_uuid, offer_type
                 )
                 
-                # Исправление некорректных данных
                 valid_extracted_offers = []
                 for offer in extracted_offers:
                     if offer.area <= 0:
