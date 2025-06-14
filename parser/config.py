@@ -18,8 +18,8 @@ PAGELOAD_TIMEOUT = int(os.getenv("PAGELOAD_TIMEOUT", 120))
 # Добавить новые параметры конфигурации
 CONFIG = {
     # Существующие настройки
-    "area_search_radius": 5,
-    "debug_search_radius": 100,
+    "area_search_radius": 7,
+    "debug_search_radius": 7,
     
     # Новые настройки
     "lot_save_interval": 5,           # Сохранять лоты каждые N обработанных
@@ -27,14 +27,14 @@ CONFIG = {
     
     # Настройки для CIAN
     "cian": {
-        "use_proxies": False,              # Использовать прокси (пока False)
-        "rotate_proxies": False,           # Ротировать прокси при блокировке
+        "use_proxies": False,               # Включаем использование прокси
+        "rotate_proxies": False,            # Включаем ротацию прокси при блокировке
         "stealth_mode": True,              # Режим скрытности (дополнительная защита)
-        "max_retries": 3,                  # Количество попыток при ошибке
-        "cooldown_after_block": 30,        # Пауза после обнаружения блокировки (сек)
-        "session_limit": 20,               # Количество запросов за одну сессию
-        "save_cookies": True,              # Сохранять рабочие куки
-        "debug_save_html": True,           # Сохранять HTML для отладки
-        "requests_interval": [3, 8]        # Интервал между запросами (мин, макс)
+        "max_retries": 5,                  # Увеличиваем количество попыток
+        "cooldown_after_block": 45,        # Увеличиваем паузу после блокировки
+        "session_limit": 15,               # Уменьшаем количество запросов на сессию
+        "save_cookies": True,              # Сохраняем рабочие куки
+        "debug_save_html": True,           # Сохраняем HTML для отладки
+        "requests_interval": [5, 12]       # Увеличиваем интервал между запросами
     }
 }

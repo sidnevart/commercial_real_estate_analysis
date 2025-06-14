@@ -66,7 +66,7 @@ def refresh_session(self):
             current_cookies = self.driver.get_cookies()
             self.driver.quit()
             
-        time.sleep(3)
+        time.sleep(5)
         
         self.initialize_driver()
         
@@ -109,110 +109,45 @@ class CianParser:
         self.first_tab = None
         self.initialize_driver()
         self.init_district_mapping()
+        self._address_filter_cache = {}
         
     def initialize_driver(self):
-        """Инициализирует драйвер Chrome с расширенными возможностями обхода обнаружения"""
-        log.info("Инициализация обновленного драйвера Chrome...")
-        
-        options = uc.ChromeOptions()
-        
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-        ]
-        user_agent = random.choice(user_agents)
-        options.add_argument(f"--user-agent={user_agent}")
-        log.info(f"Используем User-Agent: {user_agent}")
-        
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        
-        options.add_argument("--disable-infobars")
-        options.add_argument("--disable-popup-blocking")
-        options.add_argument("--disable-notifications")
-        
-        
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        
-        width = random.randint(1200, 1600)
-        height = random.randint(800, 1000)
-        options.add_argument(f"--window-size={width},{height}")
-        
-        options.page_load_strategy = "eager"
-        
-        if random.random() < 0.5:
-            options.add_argument("--incognito")
+        log.info("Инициализация драйвера Chrome...")
         
         try:
-            self.driver = uc.Chrome(options=options, headless=False)
-            self.driver.set_page_load_timeout(60)
-            
-            self.driver.execute_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => false,
-            });
-            
-            // Удаляем скрипты автоматизации
-            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-            """)
-            
-            popular_sites = ["https://www.google.ru", "https://www.yandex.ru"]
-            random.shuffle(popular_sites)
-            
-            for site in popular_sites[:1]:
-                self.driver.get(site)
-                time.sleep(random.uniform(2.0, 4.0))
-                
-                self.driver.execute_script(f"window.scrollBy(0, {random.randint(300, 800)})")
-                time.sleep(random.uniform(1.0, 2.0))
-            
-            self.driver.get(CIAN_MAIN_URL)
-            time.sleep(random.uniform(3.0, 5.0))
-            self.first_tab = self.driver.current_window_handle
-            
-            common_cookies = [
-                {"name": "visited_before", "value": "true", "domain": ".cian.ru"},
-                {"name": "session_region_id", "value": "1", "domain": ".cian.ru"},
-                {"name": "login_mro_popup", "value": "1", "domain": ".cian.ru"},
-                {"name": "_ga", "value": f"GA1.2.{random.randint(1000000, 9999999)}.{int(time.time()-random.randint(10000, 90000))}", "domain": ".cian.ru"}
-            ]
-            
-            for cookie in common_cookies:
-                try:
-                    self.driver.add_cookie(cookie)
-                except:
-                    pass
-            
-            self.driver.execute_script(f"window.scrollBy(0, {random.randint(100, 300)})")
-            time.sleep(random.uniform(0.5, 1.5))
-            self.driver.execute_script(f"window.scrollBy(0, {random.randint(300, 600)})")
-            time.sleep(random.uniform(0.5, 1.0))
-            self.driver.execute_script(f"window.scrollBy(0, {random.randint(-200, -100)})")
-            time.sleep(random.uniform(0.3, 0.7))
-                
-            self.driver.switch_to.new_window("tab")
-            log.info("Драйвер Chrome успешно инициализирован с улучшенной защитой от обнаружения")
-            
-        except Exception as e:
-            log.error(f"Ошибка при инициализации драйвера: {e}")
             if self.driver:
                 self.driver.quit()
-            raise
+        except:
+            pass
+        
+        options = uc.ChromeOptions()
+        options.add_argument(f"--user-agent={UserAgent().random}")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.page_load_strategy = "eager"
+        
+        self.driver = uc.Chrome(options=options, headless=False)
+        self.driver.set_page_load_timeout(60)
+        
+        # Открываем главную страницу
+        self.driver.get(CIAN_MAIN_URL)
+        time.sleep(5)
+        self.first_tab = self.driver.current_window_handle
+        
+        # Открываем новую вкладку
+        self.driver.switch_to.new_window("tab")
+        
+        log.info("Драйвер Chrome успешно инициализирован")
+    
         
     def refresh_main_page(self):
-        """Обновляет главную страницу для обхода ограничений"""
+        """Обновляет главную страницу как в рабочей версии"""
         try:
             current_tab = self.driver.current_window_handle
             self.driver.switch_to.window(self.first_tab)
             self.driver.refresh()
-            time.sleep(3)
+            time.sleep(5)
             self.driver.switch_to.window(current_tab)
-        except Exception as e:
-            log.warning(f"Ошибка при обновлении главной страницы: {e}")
+        except Exception:
             self.initialize_driver()
     
     def init_district_mapping(self):
@@ -236,771 +171,606 @@ class CianParser:
             log.error(f"Ошибка при загрузке районов: {e}")
     
     def get_page(self, url):
-        """Получает страницу с повторными попытками и обходом защиты"""
-        max_attempts = 4
-        for attempt in range(max_attempts):
+        try:
+            time.sleep(10)
+            self.driver.get(url)
+            return self.driver.page_source
+        except Exception as e:
+            log.warning(f"Ошибка при загрузке страницы {url}: {e}")
+            # В точности как driver_setup() в рабочей версии - пересоздаем драйвер
             try:
-                log.info(f"Загрузка страницы {url} (попытка {attempt+1}/{max_attempts})")
-                self.driver.get(url)
-                
-                time.sleep(random.uniform(3, 5))
-                
-                self.driver.execute_script("""
-                var event = document.createEvent('MouseEvents');
-                event.initMouseEvent('mousemove', true, true, window, 1, 
-                    Math.floor(Math.random() * window.innerWidth), 
-                    Math.floor(Math.random() * window.innerHeight), 
-                    Math.floor(Math.random() * window.innerWidth), 
-                    Math.floor(Math.random() * window.innerHeight), 
-                    false, false, false, false, 0, null);
-                document.dispatchEvent(event);
-                """)
-                
-                scroll_iterations = random.randint(2, 5)
-                for _ in range(scroll_iterations):
-                    scroll_amount = random.randint(100, 500)
-                    self.driver.execute_script(f"window.scrollBy(0, {scroll_amount})")
-                    time.sleep(random.uniform(0.7, 1.5))
-                
-                if random.random() < 0.4:
-                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(-300, -100)})")
-                    time.sleep(random.uniform(0.5, 1.0))
-                
-                try:
-                    self.driver.execute_script("""
-                    function isElementInViewport(el) {
-                        var rect = el.getBoundingClientRect();
-                        return (
-                            rect.top >= 0 &&
-                            rect.left >= 0 &&
-                            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-                            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-                        );
-                    }
-                    
-                    // Находим все изображения с отложенной загрузкой
-                    var lazyImages = Array.from(document.querySelectorAll('img[data-src], img[data-original]'));
-                    
-                    // Проверяем, есть ли они в поле зрения, и загружаем, если да
-                    lazyImages.forEach(function(img) {
-                        if (isElementInViewport(img)) {
-                            if (img.dataset.src) img.src = img.dataset.src;
-                            if (img.dataset.original) img.src = img.dataset.original;
-                        }
-                    });
-                    """)
-                except Exception:
-                    pass
-                
-                html = self.driver.page_source
-                
-                blocking_markers = [
-                    "временно недоступна", 
-                    "captcha", 
-                    "подтвердите что вы не робот",
-                    "обнаружили подозрительную активность",
-                    "доступ ограничен",
-                    "слишком много запросов"
-                ]
-                if any(marker in html.lower() for marker in blocking_markers):
-                    log.warning(f"Обнаружены признаки блокировки на попытке {attempt+1}, обновляем сессию")
-                    
-                    block_page_file = os.path.join(LOG_DIR, f"block_page_{int(time.time())}.html")
-                    with open(block_page_file, "w", encoding="utf-8") as f:
-                        f.write(f"<!-- URL: {url} -->\n{html}")
-                    
-                    screenshot_file = os.path.join(LOG_DIR, f"block_screen_{int(time.time())}.png")
-                    try:
-                        self.driver.save_screenshot(screenshot_file)
-                    except:
-                        pass
-                        
-                    self.refresh_main_page()
-                    
-                    time.sleep(random.uniform(10, 15)) 
-                    continue
-                
-                cookies = self.driver.get_cookies()
-                if len(cookies) > 3: 
-                    cookies_file = os.path.join(LOG_DIR, "working_cookies.json")
-                    try:
-                        with open(cookies_file, "w") as f:
-                            json.dump(cookies, f)
-                    except Exception as e:
-                        log.debug(f"Не удалось сохранить куки: {e}")
-                    
-                return html
-                
-            except Exception as e:
-                log.error(f"Ошибка при получении страницы {url}: {e}")
-                self.refresh_main_page()
-                time.sleep(random.uniform(5, 10)) 
-        
-        log.error(f"Не удалось загрузить страницу {url} после {max_attempts} попыток")
-        return None
+                if self.driver:
+                    self.driver.quit()
+            except:
+                pass
+            self.initialize_driver()
+            # Рекурсивно пытаемся еще раз
+            return self.get_page(url)
+
     
-    def get_json(self, url):
-        """Получает JSON с указанного URL"""
+
+    """ def get_page(self, url):
+        try:
+            # Запускаем загрузку страницы
+            self.driver.get(url)
+            
+            # Увеличиваем таймаут загрузки
+            self.driver.set_page_load_timeout(90)
+            
+            # Проверяем тип страницы для разного ожидания
+            if "cat.php" in url:  # Это страница поиска
+                # 1. Ожидаем загрузку основного контейнера результатов
+                try:
+                    WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-name='SearchContainer'], ._32bbee5fda--serp--bTAO_"))
+                    )
+                    
+                    # 2. Проверяем индикаторы загрузки и ждем их исчезновения
+                    try:
+                        loading_indicator = WebDriverWait(self.driver, 3).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-name='Spinner'], .c6e8ba5398--loader--HqDVk"))
+                        )
+                        # Ждем исчезновения индикатора загрузки если он есть
+                        WebDriverWait(self.driver, 30).until(
+                            EC.staleness_of(loading_indicator)
+                        )
+                    except:
+                        # Если индикатор не найден, возможно, страница уже загружена
+                        pass
+                    
+                    # 3. Дополнительно ждем появления результатов или сообщения о пустом результате
+                    WebDriverWait(self.driver, 10).until(
+                        lambda d: len(d.find_elements(By.CSS_SELECTOR, 
+                            "a[data-name='CommercialTitle'], div[data-name='EmptyMessage'], ._32bbee5fda--container--pBaJE")) > 0
+                    )
+                    
+                    # 4. Для пустых результатов - дополнительная проверка
+                    empty_results = self.driver.find_elements(By.CSS_SELECTOR, "div[data-name='EmptyMessage']")
+                    if empty_results:
+                        log.info("Обнаружено сообщение о пустых результатах")
+                    else:
+                        # Если есть результаты, проверим их количество
+                        offers = self.driver.find_elements(By.CSS_SELECTOR, "a[data-name='CommercialTitle']")
+                        log.info(f"Найдено {len(offers)} объявлений на странице")
+                    
+                    # 5. Небольшая дополнительная пауза для завершения рендеринга
+                    time.sleep(2)
+                    
+                except Exception as wait_error:
+                    log.warning(f"Ожидание элементов страницы поиска не завершилось: {wait_error}")
+                    # Даем дополнительное время на прогрузку
+                    time.sleep(10)
+                    
+            elif "commercial" in url:  # Это страница объявления
+                try:
+                    # Ждем загрузки ключевых элементов на странице объявления
+                    WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, 
+                            "[data-name='CommercialFullHeight'], [data-name='OfferTitle']"))
+                    )
+                    
+                    # Короткая пауза для завершения загрузки скриптов
+                    time.sleep(2)
+                    
+                except Exception as wait_error:
+                    log.warning(f"Ожидание элементов страницы объявления не завершилось: {wait_error}")
+                    time.sleep(5)
+                    
+            else:
+                # Для других страниц просто ждем небольшую паузу
+                time.sleep(5)
+                
+            # Проверка на captcha или блокировку
+            if any(marker in self.driver.page_source.lower() for marker in ["captcha", "подтвердите, что вы не робот"]):
+                log.warning("⚠️ Обнаружена CAPTCHA! Требуется вмешательство")
+                # Сохраняем страницу и скриншот для анализа
+                save_debug_info(url, self.driver.page_source, self.driver, "captcha")
+                # Даем время на ручное решение
+                time.sleep(15)
+                
+            return self.driver.page_source
+            
+        except Exception as e:
+            log.warning(f"Ошибка при загрузке страницы {url}: {e}")
+            
+            # В точности как driver_setup() в рабочей версии - пересоздаем драйвер
+            try:
+                if self.driver:
+                    self.driver.quit()
+            except:
+                pass
+                
+            self.initialize_driver()
+            
+            # Добавляем паузу перед повторной попыткой для уменьшения нагрузки
+            time.sleep(5)
+            
+            # Рекурсивно пытаемся еще раз
+            return self.get_page(url)"""
+    
+    def get_json(self, url, _retries=0):
+        """Получает JSON как в рабочей версии"""
         try:
             self.driver.get(url)
-            time.sleep(2)
-            pre = self.driver.find_element(By.TAG_NAME, "pre")
-            return json.loads(pre.text)
-        except Exception as e:
-            log.error(f"Ошибка при получении JSON с {url}: {e}")
-            return {}
-    
-    def post_json(self, url, body):
-        """Отправляет POST запрос и получает JSON ответ"""
+        except Exception:
+            self.initialize_driver()
+            return self.get_json(url)
+
+        if _retries > 0:
+            time.sleep(10)
+
         try:
-            self.driver.execute_script("""
-            function post(path, params) {
-                const form = document.createElement('form');
-                form.method = 'post';
-                form.action = path;
-                
-                for (const key in params) {
-                    if (params.hasOwnProperty(key)) {
-                        const hiddenField = document.createElement('input');
-                        hiddenField.type = 'hidden';
-                        hiddenField.name = key;
-                        hiddenField.value = params[key];
-                        form.appendChild(hiddenField);
+            return json.loads(self.driver.find_element(By.TAG_NAME, "pre").text)
+        except Exception:
+            if _retries < 10:
+                time.sleep(1)
+                return self.get_json(url, _retries + 1)
+            raise
+
+    def post_json(self, url, body, _retries=0):
+        """Отправляет POST запрос как в рабочей версии"""
+        try:
+            self.driver.execute_script(
+                """
+                function post(path, params, method='post') {
+                    const form = document.createElement('form');
+                    form.method = method;
+                    form.action = path;
+
+                    for (const key in params) {
+                        if (params.hasOwnProperty(key)) {
+                            const hiddenField = document.createElement('input');
+                            hiddenField.type = 'hidden';
+                            hiddenField.name = key;
+                            hiddenField.value = params[key];
+
+                            form.appendChild(hiddenField);
+                        }
                     }
+
+                    document.body.appendChild(form);
+                    form.submit();
                 }
-                
-                document.body.appendChild(form);
-                form.submit();
-            }
-            
-            post(arguments[1], arguments[0]);
-            """, body, url)
-            
-            time.sleep(3)
-            pre = self.driver.find_element(By.TAG_NAME, "pre")
-            return json.loads(pre.text)
-        except Exception as e:
-            log.error(f"Ошибка при POST запросе к {url}: {e}")
-            return {}
+
+                post(arguments[1], arguments[0]);
+                """,
+                body,
+                url,
+            )
+        except Exception:
+            self.initialize_driver()
+            return self.post_json(url, body)
+
+        if _retries > 0:
+            time.sleep(5)
+
+        try:
+            return json.loads(self.driver.find_element(By.TAG_NAME, "pre").text)
+        except Exception:
+            if _retries < 10:
+                time.sleep(1)
+                return self.get_json(url, _retries + 1)
+            raise
     
     def extract_offers_from_search_page(self, search_page, search_url, lot_uuid, offer_type):
-        """Извлекает объявления напрямую со страницы поиска"""
+        """Извлекает объявления с поддержкой разных форматов страницы"""
         offers = []
         
+        # Проверка на пустые результаты
+        if "по вашему запросу ничего не найдено" in search_page.lower():
+            log.info(f"Нет результатов для {offer_type}")
+            return []
+        
         try:
-            log.info(f"Анализ страницы поиска для {offer_type}: {search_url}")
+            # Используем более мощный парсер lxml
+            search_soup = BeautifulSoup(search_page, 'lxml')
             
-            debug_file = os.path.join(LOG_DIR, f"search_page_{int(time.time())}.html")
-            with open(debug_file, "w", encoding="utf-8") as f:
-                f.write(search_page)
-            log.info(f"Сохранена страница поиска для отладки: {debug_file}")
+            # Поиск по ВСЕМ возможным селекторам объявлений (в порядке приоритета)
+            offer_links = search_soup.find_all("a", attrs={"data-name": "CommercialTitle"})
             
-            # Метод 1: Извлечение из window.ca("pageview", {...})
-            match = re.search(r'window\.ca\("pageview",(\{.*?\})\)', search_page)
-            if match:
+            # Если не нашли объявления с первым селектором, пробуем альтернативные
+            if not offer_links:
+                log.info("Основной селектор не сработал, использую альтернативные...")
+                offer_links = search_soup.select('.c6e8ba5398--offer-container--pCGiP a[href*="/commercial/"]')
+                
+            # Если и это не сработало, ищем любые ссылки на коммерческие объекты
+            if not offer_links:
+                log.info("Используем общий селектор для коммерческой недвижимости...")
+                offer_links = search_soup.select('a[href*="/commercial/"]')
+                
+            # Если не нашли ничего - пробуем искать в DOM любые ссылки на объекты коммерческой недвижимости
+            if not offer_links:
+                # Пробуем последний вариант - искать именно по содержимому href
+                log.info("Ищем любые ссылки на коммерческую недвижимость...")
+                offer_links = [link for link in search_soup.find_all('a') 
+                            if link.has_attr('href') and '/commercial/' in link['href']]
+            
+            # Извлекаем URL и удаляем дубликаты
+            offer_urls = []
+            seen_urls = set()
+            
+            for link in offer_links:
+                href = link.get('href')
+                if href and "/commercial/" in href and href not in seen_urls:
+                    if not href.startswith('http'):
+                        href = f"https://www.cian.ru{href}"
+                    offer_urls.append(href)
+                    seen_urls.add(href)
+            
+            log.info(f"Найдено {len(offer_urls)} уникальных ссылок на объявления {offer_type}")
+            
+            # Сохраняем страницу поиска для отладки если нет ссылок
+            if not offer_urls:
+                save_debug_info(search_url, search_page, self.driver, f"no_links_{offer_type}")
+                log.warning(f"Не найдено ссылок на объявления в странице поиска для {offer_type}!")
+                return []
+            
+            # Ограничим количество обрабатываемых объявлений
+            max_offers = 20
+            if len(offer_urls) > max_offers:
+                log.info(f"Ограничиваем до {max_offers} объявлений из {len(offer_urls)}")
+                offer_urls = offer_urls[:max_offers]
+            log.info(f"Найдено {len(offer_urls)} ссылок на объявления {offer_type}")
+            
+            # Обрабатываем каждое объявление
+            for i, offer_url in enumerate(offer_urls):
                 try:
-                    json_str = match.group(1)
-                    data = json.loads(json_str)
-                    if 'products' in data and isinstance(data['products'], list):
-                        for product in data['products']:
-                            if 'id' not in product:
-                                continue
-                                
-                            oid = str(product.get('id', ''))
-                            if not oid or not isinstance(oid, str) or not oid.isdigit():
-                                log.warning(f"Некорректный ID '{oid}', генерируем новый")
-                                oid = str(int(time.time() * 1000) + random.randint(1000, 9999))
-                                
-                            price = 0
-                            if offer_type.startswith("sale"):
-                                price_candidates = [
-                                    product.get('price', 0),
-                                    product.get('price', {}).get('value', 0) if isinstance(product.get('price'), dict) else 0
-                                ]
-                                price = next((p for p in price_candidates if p), 0)
-                            else:
-                                price_candidates = [
-                                    product.get('price', 0),
-                                    product.get('price', {}).get('value', 0) if isinstance(product.get('price'), dict) else 0
-                                ]
-                                price = next((p for p in price_candidates if p), 0)
-                            
-                            area = 0
-                            area_str = ""
-                            if 'features' in product and isinstance(product['features'], dict):
-                                area_str = product['features'].get('area', '')
-                            elif 'features' in product and isinstance(product['features'], list):
-                                for feature in product['features']:
-                                    if isinstance(feature, dict) and 'name' in feature and 'м²' in feature.get('name', ''):
-                                        area_str = feature.get('value', '')
-                                        break
-                            
-                            if not area_str and 'headline' in product and 'м²' in product['headline']:
-                                area_str = product['headline']
-                            
-                            if area_str:
-                                area_match = re.search(r'(\d+[.,]?\d*)\s*[мm]²', area_str.replace(' ', ''))
-                                if area_match:
-                                    area = float(area_match.group(1).replace(',', '.'))
-                            
-                            address = ""
-                            if 'geo' in product and isinstance(product['geo'], dict):
-                                address = product['geo'].get('address', '')
-                            elif 'address' in product:
-                                address = product['address']
-                                
-                            if not address:
-                                log.warning(f"Не найден адрес для объявления ID {oid}, пробуем альтернативные методы")
-                                
-                                metro = ""
-                                if 'geo' in product and 'undergrounds' in product['geo'] and product['geo']['undergrounds']:
-                                    metros = product['geo']['undergrounds']
-                                    if isinstance(metros, list) and metros and len(metros) > 0:
-                                        if isinstance(metros[0], dict) and 'name' in metros[0]:
-                                            metro = metros[0]['name']
-                                        elif isinstance(metros[0], str):
-                                            metro = metros[0]
-                                
-                                district = ""
-                                if 'geo' in product:
-                                    if 'districtsInfo' in product['geo'] and product['geo']['districtsInfo']:
-                                        districts = product['geo']['districtsInfo']
-                                        if isinstance(districts, list) and districts and len(districts) > 0:
-                                            if isinstance(districts[0], dict) and 'name' in districts[0]:
-                                                district = districts[0]['name']
-                                            elif isinstance(districts[0], str):
-                                                district = districts[0]
-                                    elif 'district' in product['geo']:
-                                        district = product['geo']['district']
-                                
-                                location = ""
-                                if 'geo' in product and 'locationName' in product['geo']:
-                                    location = product['geo']['locationName']
-                                
-                                building_address = ""
-                                if 'building' in product and 'address' in product['building']:
-                                    building_address = product['building']['address']
-                                
-                                address_parts = []
-                                if location:
-                                    address_parts.append(f"Москва, {location}")
-                                elif district:
-                                    address_parts.append(f"Москва, район {district}")
-                                else:
-                                    address_parts.append("Москва")
-                                    
-                                if district and not location:
-                                    address_parts.append(f"район {district}")
-                                    
-                                if metro:
-                                    address_parts.append(f"м. {metro}")
-                                    
-                                if building_address:
-                                    address_parts.append(building_address)
-                                
-                                if address_parts:
-                                    address = ", ".join(address_parts)
-                                    log.info(f"Сформирован альтернативный адрес для {oid}: {address}")
-                            
-                            if price > 0 and area > 0:
-                                offer = Offer(
-                                    id=oid,
-                                    lot_uuid=lot_uuid,
-                                    price=price,
-                                    area=area,
-                                    url=f"https://www.cian.ru/{offer_type.split()[0]}/commercial/{oid}/",
-                                    type=offer_type.split()[0],
-                                    address=address
-                                )
-                                offers.append(offer)
-                        
-                        log.info(f"Извлечено {len(offers)} объявлений из JSON-данных")
-                        return offers
-                except Exception as e:
-                    log.warning(f"Ошибка при декодировании JSON-данных из скрипта: {str(e)}")
-            
-            # Метод 2: Извлечение из _CIAN_COMPONENT_DATA_
-            scripts = re.findall(r'window\._CIAN_COMPONENT_DATA_\s*=\s*({.*?});', search_page)
-            if scripts:
-                for script_text in scripts:
-                    try:
-                        data = json.loads(script_text)
-                        offers_list = []
-                        
-                        if "offers" in data:
-                            offers_list = data["offers"]
-                        elif "value" in data and "results" in data["value"]:
-                            offers_list = data["value"]["results"].get("offers", [])
-                        elif "value" in data and "results" in data["value"] and "aggregatedOffers" in data["value"]["results"]:
-                            offers_list = data["value"]["results"]["aggregatedOffers"]
-                        
-                        for offer_data in offers_list:
-                            try:
-                                oid = str(offer_data.get("id", 0))
-                                
-                                if not oid or not isinstance(oid, str) or not oid.isdigit():
-                                    log.warning(f"Некорректный ID '{oid}', генерируем новый")
-                                    oid = str(int(time.time() * 1000) + random.randint(1000, 9999))
-                                
-                                if offer_type.startswith("sale"):
-                                    href = f"https://www.cian.ru/sale/commercial/{oid}/"
-                                else:
-                                    href = f"https://www.cian.ru/rent/commercial/{oid}/"
-                                
-                                price = 0
-                                price_candidates = [
-                                    offer_data.get("bargainTerms", {}).get("priceRur", 0),
-                                    offer_data.get("price", 0),
-                                    offer_data.get("priceTotalRur", 0),
-                                    offer_data.get("priceTotalPerMonthRur", 0)
-                                ]
-                                price = next((p for p in price_candidates if p), 0)
-                                
-                                area = 0
-                                if "totalArea" in offer_data:
-                                    area = float(offer_data["totalArea"])
-                                elif "areaDetails" in offer_data and "totalArea" in offer_data["areaDetails"]:
-                                    area = float(offer_data["areaDetails"]["totalArea"])
-                                elif "area" in offer_data:
-                                    area = float(offer_data["area"])
-                                
-                                address = ""
-                                if "geo" in offer_data and "address" in offer_data["geo"]:
-                                    address = offer_data["geo"]["address"]
-                                elif "address" in offer_data:
-                                    address = offer_data["address"]
-                                
-                                if not address:
-                                    log.warning(f"Не найден адрес для объявления {oid}, пробуем альтернативные методы")
-                                    
-                                    metro = ""
-                                    if "geo" in offer_data and "undergrounds" in offer_data["geo"]:
-                                        undergrounds = offer_data["geo"]["undergrounds"]
-                                        if undergrounds and isinstance(undergrounds, list) and len(undergrounds) > 0:
-                                            if isinstance(undergrounds[0], dict) and "name" in undergrounds[0]:
-                                                metro = undergrounds[0]["name"]
-                                            elif isinstance(undergrounds[0], str):
-                                                metro = undergrounds[0]
+                    log.info(f"Загрузка страницы объявления [{i+1}/{len(offer_urls)}]: {offer_url}")
+                    
+                    # Пауза между запросами
+                    time.sleep(random.uniform(2, 4)) 
+                    
+                    # Получаем страницу объявления
+                    offer_page = self.get_page(offer_url)
+                    if not offer_page:
+                        log.warning(f"Не удалось получить страницу объявления: {offer_url}")
+                        continue
+                    
+                    # Обрабатываем страницу с помощью BeautifulSoup и извлекаем данные
+                    offer_soup = BeautifulSoup(offer_page, features="lxml")
 
-                                    # Извлечение района
-                                    district = ""
-                                    if "geo" in offer_data:
-                                        if "districts" in offer_data["geo"]:
-                                            districts = offer_data["geo"]["districts"]
-                                            if districts and isinstance(districts, list) and len(districts) > 0:
-                                                if isinstance(districts[0], dict) and 'name' in districts[0]:
-                                                    district = districts[0]['name']
-                                                elif isinstance(districts[0], str):
-                                                    district = districts[0]
-                                        elif "district" in offer_data["geo"]:
-                                            district = offer_data["geo"]["district"]
-
-                                    location = ""
-                                    if "geo" in offer_data and "locationName" in offer_data["geo"]:
-                                        location = offer_data["geo"]["locationName"]
-                                    
-                                    # Проверяем альтернативные пути к адресу
-                                    if "fullAddress" in offer_data:
-                                        address = offer_data["fullAddress"]
-                                        log.info(f"Найден адрес через fullAddress: {address}")
-                                    elif "location" in offer_data and "address" in offer_data["location"]:
-                                        address = offer_data["location"]["address"]
-                                        log.info(f"Найден адрес через location.address: {address}")
-                                    elif "building" in offer_data and "address" in offer_data["building"]:
-                                        address = offer_data["building"]["address"]
-                                        log.info(f"Найден адрес через building.address: {address}")
-                                    else:
-                                        # Формируем адрес из компонентов
-                                        address_parts = []
-                                        
-                                        if location:
-                                            address_parts.append(f"Москва, {location}")
-                                        elif district:
-                                            address_parts.append(f"Москва, район {district}")
-                                        else:
-                                            address_parts.append("Москва")
-                                        
-                                        if metro:
-                                            address_parts.append(f"м. {metro}")
-                                        
-                                        if address_parts:
-                                            address = ", ".join(address_parts)
-                                            log.info(f"Сформирован адрес из местоположения: {address}")
-                                        else:
-                                            address = "Москва" 
-                                            log.warning(f"Установлен базовый адрес для {oid}: {address}")
-                                
-                                if price > 0 and area > 0:
-                                    offer = Offer(
-                                        id=oid,
-                                        lot_uuid=lot_uuid,
-                                        price=price,
-                                        area=area,
-                                        url=href,
-                                        type=offer_type.split()[0],
-                                        address=address
-                                    )
-                                    offers.append(offer)
-                            except Exception as e:
-                                log.debug(f"Ошибка обработки объявления: {str(e)}")
-                    except Exception as e:
-                        log.debug(f"Ошибка обработки JSON: {str(e)}")
-                
-                if offers:
-                    log.info(f"Извлечено {len(offers)} объявлений из _CIAN_COMPONENT_DATA_")
-                    return offers
-            
-            # Метод 3: JavaScript-извлечение
-            log.info("Пытаемся извлечь данные с помощью JavaScript")
-            js_offers = self.driver.execute_script("""
-            try {
-                // Поиск карточек объявлений по разным селекторам
-                function findCards() {
-                    const selectors = [
-                        '[data-name="CardComponent"]', 
-                        '.c-card', 
-                        '.catalog-item',
-                        '.offer-card',
-                        'article.--card--',
-                        '[data-testid="offer-card"]',
-                        '.serp-item',
-                        '.CardItem',
-                        '.catalog-card'
-                    ];
-                    
-                    for (const selector of selectors) {
-                        const cards = document.querySelectorAll(selector);
-                        if (cards && cards.length) {
-                            console.log("Found cards with selector", selector, cards.length);
-                            return Array.from(cards);
-                        }
-                    }
-                    
-                    // Если не нашли по селекторам, поищем ссылки
-                    const links = document.querySelectorAll('a[href*="/offer/"], a[href*="/rent/"], a[href*="/sale/"]');
-                    if (links && links.length) {
-                        console.log("Found links", links.length);
-                        return Array.from(links).map(link => link.closest('article') || link.closest('div') || link);
-                    }
-                    
-                    return [];
-                }
-                
-                // Извлечение цены из текста
-                function extractPrice(text) {
-                    if (!text) return 0;
-                    const matches = text.replace(/\\s/g, '').match(/\\d+/g);
-                    return matches ? parseInt(matches.join('')) : 0;
-                }
-                
-                // Извлечение площади из текста
-                function extractArea(text) {
-                    if (!text) return 0;
-                    const matches = text.match(/(\\d+[.,]?\\d*)[\\s]*м²/);
-                    return matches ? parseFloat(matches[1].replace(',', '.')) : 0;
-                }
-                
-                // Извлечение адреса или местоположения
-                function extractLocation(card) {
-                    // Приоритет - найти полный оригинальный адрес
-                    const fullAddressSelectors = [
-                        '[data-name="GeoLabel"]',
-                        '[data-name="AddressContainer"]', 
-                        '.address--GbMIh',
-                        '.geo-address--U0Sxb',
-                        '.address',
-                        '.location-address'
-                    ];
-                    
-                    // Сначала ищем полный адрес по основным селекторам
-                    for (const selector of fullAddressSelectors) {
-                        const addressElement = card.querySelector(selector);
-                        if (addressElement && addressElement.textContent.trim().length > 10) {
-                            console.log("Found full address:", addressElement.textContent.trim());
-                            return addressElement.textContent.trim();
-                        }
-                    }
-                    
-                    // Если не нашли полный адрес - ищем метро, район и другие компоненты
-                    const metroElement = card.querySelector('[data-name="MetroInfo"], [data-mark="Underground"], .underground-item, .geo-undergrounds-item--TWnYV, .underground-name');
-                    const districtElement = card.querySelector('[data-name="DistrictInfo"], .district-name, .geo-location');
-                    
-                    // Формируем адрес из компонентов
-                    const parts = [];
-                    parts.push('Москва');
-                    
-                    if (districtElement) {
-                        const districtText = districtElement.textContent.trim();
-                        if (!districtText.toLowerCase().includes('район')) {
-                            parts.push('район ' + districtText);
-                        } else {
-                            parts.push(districtText);
-                        }
-                    }
-                    
-                    if (metroElement) {
-                        const metroText = metroElement.textContent.trim();
-                        if (!metroText.toLowerCase().includes('м.')) {
-                            parts.push('м. ' + metroText);
-                        } else {
-                            parts.push(metroText);
-                        }
-                    }
-                    
-                    return parts.join(', ');
-                }
-                
-                const cards = findCards();
-                console.log("Total cards found:", cards.length);
-                
-                return cards.map(card => {
-                    try {
-                        // Поиск различных элементов с информацией
-                        const linkElement = card.querySelector('a[href*="/offer/"], a[href*="/rent/"], a[href*="/sale/"]');
-                        const href = linkElement ? linkElement.getAttribute('href') : '';
-                        const id = href ? href.split('/').filter(Boolean).pop() : '';
-                        
-                        console.log("Processing card with href:", href);
-                        
-                        // Поиск цены
-                        const priceSelectors = [
-                            '[data-mark="MainPrice"]', 
-                            '[data-name="PriceInfo"]', 
-                            '.c-price', 
-                            '.price', 
-                            '[data-testid="price"]',
-                            '.CardItem__price--foSJi',
-                            '.price__price--eLjQ_'
-                        ];
-                        let priceEl = null;
-                        for (const selector of priceSelectors) {
-                            priceEl = card.querySelector(selector);
-                            if (priceEl) break;
-                        }
-                        
-                        // Если не нашли по селекторам, ищем по тексту
-                        let price = 0;
-                        if (priceEl) {
-                            price = extractPrice(priceEl.textContent);
-                            console.log("Price found:", price);
-                        } else {
-                            // Ищем по тексту всей карточки
-                            const priceText = card.innerText.match(/\\d+\\s*\\d+\\s*\\d+\\s*₽/);
-                            if (priceText) {
-                                price = extractPrice(priceText[0]);
-                                console.log("Price found by text:", price);
-                            }
-                        }
-                        
-                        // Поиск площади
-                        const areaSelectors = [
-                            '[data-mark="AreaInfo"]', 
-                            '[data-name="AreaInfo"]', 
-                            '.c-area', 
-                            '.area', 
-                            '[data-testid="area"]',
-                            '.main-data--info--value',
-                            '.CardItem__area--gV6bA'
-                        ];
-                        let areaEl = null;
-                        for (const selector of areaSelectors) {
-                            areaEl = card.querySelector(selector);
-                            if (areaEl && areaEl.textContent.includes('м²')) break;
-                        }
-                        
-                        // Если не нашли площадь, пробуем найти по тексту
-                        let area = 0;
-                        if (areaEl) {
-                            area = extractArea(areaEl.textContent);
-                            console.log("Area found:", area);
-                        } else {
-                            // Поиск по всему тексту карточки
-                            const cardText = card.textContent;
-                            const areaMatch = cardText.match(/(\\d+[.,]?\\d*)\\s*м²/);
-                            if (areaMatch) {
-                                area = parseFloat(areaMatch[1].replace(',', '.'));
-                                console.log("Area found by text:", area);
-                            }
-                        }
-                        
-                        // Используем функцию извлечения адреса
-                        const address = extractLocation(card);
-                        
-                        return {
-                            id: id,
-                            url: href.startsWith('/') ? 'https://www.cian.ru' + href : href,
-                            price: price,
-                            area: area,
-                            address: address
-                        };
-                    } catch (e) {
-                        console.error('Error processing card:', e);
-                        return null;
-                    }
-                }).filter(item => item && item.id && item.price > 0 && item.area > 0);
-            } catch (e) {
-                console.error('Global error:', e);
-                return [];
-            }
-            """)
-            
-            if js_offers and len(js_offers) > 0:
-                log.info(f"JavaScript метод нашел {len(js_offers)} объявлений")
-                
-                for data in js_offers:
                     try:
-                        offer_id = data.get('id', '0')
-                        if not offer_id or not isinstance(offer_id, str) or not offer_id.isdigit():
-                            log.warning(f"Некорректный ID '{offer_id}', генерируем новый")
-                            offer_id = str(int(time.time() * 1000) + random.randint(1000, 9999))
+                        script_tag = next(
+                            tag
+                            for tag in offer_soup.find_all("script")
+                            if "window._cianConfig['frontend-offer-card']" in tag.text
+                        )
+                    except StopIteration:
+                        log.warning(f"Не найден скрипт с данными объявления в {offer_url}")
+                        continue
+
+                    config_json_string = (
+                        script_tag.text.strip().split(".concat(", 1)[1].rsplit(");", 1)[0]
+                    )
+                    config_json = json.loads(config_json_string)
+                    offer_info = next(
+                        filter(lambda block: block["key"] == "defaultState", config_json)
+                    )["value"]
+
+                    # Извлекаем площадь в точности как в parsing_torgi_and_cian.py
+                    area = None
+                    try:
+                        if "land" in offer_info["offerData"]["offer"]:
+                            match offer_info["offerData"]["offer"]["land"]["areaUnitType"]:
+                                case "sotka":
+                                    area = float(offer_info["offerData"]["offer"]["land"]["area"]) * 100
+                                case "hectare":
+                                    area = float(offer_info["offerData"]["offer"]["land"]["area"]) * 10000
+                    except (LookupError, ValueError):
+                        pass
+
+                    if area is None:
+                        area = float(offer_info["offerData"]["offer"].get("totalArea", 0))
+
+                    if not area:
+                        log.warning(f"Не найдена площадь для {offer_url}")
+                        continue
+                    
+                    # Извлекаем данные объявления точно так же, как в parsing_torgi_and_cian.py
+                    try:
+                        # Извлекаем адрес из adfoxOffer
+                        address = offer_info["adfoxOffer"]["response"]["data"]["unicomLinkParams"]["puid14"]
                         
-                        url = data.get('url', '')
-                        if not url and offer_id:
-                            if offer_type.startswith("sale"):
-                                url = f"https://www.cian.ru/sale/commercial/{offer_id}/"
-                            else:
-                                url = f"https://www.cian.ru/rent/commercial/{offer_id}/"
+                        # Определяем тип цены в зависимости от типа предложения
+                        price = offer_info["offerData"]["offer"].get(
+                            "priceTotalRur",
+                            offer_info["offerData"]["offer"].get(
+                                "priceTotalPerMonthRur",
+                                0,
+                            ),
+                        )
                         
+                        # Создаем объект предложения
                         offer = Offer(
-                            id=offer_id,
+                            id=offer_url.split('/')[-2],
                             lot_uuid=lot_uuid,
-                            price=data.get('price', 0),
-                            area=data.get('area', 0),
-                            url=url,
-                            type=offer_type.split()[0],
-                            address=data.get('address', '')
+                            address=f"{address}",
+                            area=area,
+                            price=price,
+                            url=offer_url,
+                            type=offer_type.split()[0]
                         )
                         offers.append(offer)
+                        log.info(f"✓ Успешно обработано объявление {offer_url}")
+                        
                     except Exception as e:
-                        log.warning(f"Ошибка при создании Offer из JS-данных: {str(e)}")
-                return offers
-            else:
-                log.warning("JavaScript метод не вернул результатов")
-
+                        log.error(f"Что-то не так с объявлением '{offer_url}': {e}")
+                        continue
+                    
+                except Exception as e:
+                    log.error(f"Ошибка при обработке объявления {offer_url}: {str(e)}")
+                    continue
+            
         except Exception as e:
             log.exception(f"Ошибка при извлечении объявлений с {search_url}: {str(e)}")
         
-        try:
-            screenshot_file = os.path.join(LOG_DIR, f"failed_search_{int(time.time())}.png")
-            self.driver.save_screenshot(screenshot_file)
-            log.warning(f"Сохранен скриншот при неудачном поиске: {screenshot_file}")
-        except:
-            pass
-        
-        log.warning("Все методы извлечения данных не дали результатов")
-        return []
+        return offers
     
-    def unformatted_address_to_cian_search_filter(self, address):
-        """Преобразует адрес в параметр поискового фильтра CIAN."""
-        try:
-            for old, new in address_replacements.items():
-                address = address.replace(old, new)
-
-            if "москва" in address.lower() and "область" not in address.lower():
-                log.info("Быстро определен регион: Москва")
-                return "region=1"  
-                
-            if "область" in address.lower():
-                log.info("Быстро определен регион: Московская область")
-                return "region=4593"  
-                
-            geocoding_response = self.get_json(CIAN_GEOCODE.format(address))
+    def unformatted_address_to_cian_search_filter(self, address: str) -> str:
+        """
+        Преобразует адрес в параметр поискового фильтра ЦИАН.
+        
+        Алгоритм:
+        1. Сначала проверяем кэш, чтобы не делать лишних запросов
+        2. Выполняем стандартизацию адреса (замена сокращений и т.д.)
+        3. Проверяем простые случаи (явно указана Москва/МО)
+        4. Выполняем геокодирование адреса через API ЦИАН
+        5. Для МО ищем конкретный населенный пункт
+        6. Для Москвы ищем сначала район
+        7. Если район не найден - ищем улицу
+        8. В случае неудачи возвращаемся на уровень региона
+        
+        Args:
+            address: Текстовый адрес объекта
             
+        Returns:
+            Строка параметра для поискового URL ЦИАН
+        """
+        # Кэширование результатов для повторяющихся адресов
+        if hasattr(self, '_address_filter_cache') and address in self._address_filter_cache:
+            log.info(f"Кэш: Использован сохраненный фильтр для адреса «{address}»")
+            return self._address_filter_cache[address]
+            
+        log.info(f"Определение поискового фильтра для адреса: «{address}»")
+        
+        # Нормализация адреса
+        normalized_address = address
+        for old, new in address_replacements.items():
+            normalized_address = normalized_address.replace(old, new)
+        
+        # Базовые быстрые проверки по ключевым словам
+        address_lower = normalized_address.lower()
+        
+        # Явно указан район Москвы - прямое соответствие
+        for district_name, district_id in moscow_district_name_to_cian_id.items():
+            district_pattern = f"район {district_name.lower()}"
+            if district_pattern in address_lower or f"{district_name.lower()} район" in address_lower:
+                result = f"district[0]={district_id}"
+                log.info(f"Быстрое определение: найден район «{district_name}» (ID: {district_id})")
+                
+                # Сохраняем в кэш
+                if hasattr(self, '_address_filter_cache'):
+                    self._address_filter_cache[address] = result
+                return result
+        
+        # Подготовка результата по умолчанию
+        default_result = None
+        
+        # Явная проверка на Московскую область и Москву
+        if "москва" in address_lower and "область" not in address_lower:
+            default_result = "region=1"
+            log.info("Базовое определение региона: Москва")
+        elif "область" in address_lower or "мо" in re.findall(r'\bмо\b', address_lower):
+            default_result = "region=4593" 
+            log.info("Базовое определение региона: Московская область")
+        
+        try:
+            # Геокодирование через API ЦИАН
+            geocoding_response = self.get_json(CIAN_GEOCODE.format(normalized_address))
+            
+            # Поиск подходящего результата геокодирования
             geocoding_result = None
             for item in geocoding_response.get("items", []):
-                if item.get("text", "").startswith("Россия, Моск"):
+                item_text = item.get("text", "")
+                if item_text.startswith("Россия, Моск"):  # Подходят и Москва, и Московская область
                     geocoding_result = item
+                    log.info(f"Результат геокодирования: {item_text}")
                     break
                     
             if not geocoding_result:
-                log.warning(f"Не найдено соответствие для адреса: {address}")
-                return "region=4593" if "область" in address.lower() else "region=1"
+                log.warning(f"Не найдено геокодирование для адреса: {address}")
+                return default_result or ("region=4593" if "область" in address_lower else "region=1")
 
+            # Получаем координаты
             lon, lat = geocoding_result.get("coordinates", [0, 0])
+            if lon == 0 or lat == 0:
+                log.warning("Получены нулевые координаты, используем регион по умолчанию")
+                return default_result or ("region=4593" if "область" in address_lower else "region=1")
                 
+            # Логика для Московской области
             if "Московская область" in geocoding_result.get("text", ""):
-                for_search_result = self.post_json(
-                    CIAN_GEOCODE_FOR_SEARCH,
-                    {"lat": lat, "lng": lon, "kind": "locality"}
-                )
+                log.info("Определен регион: Московская область")
                 
                 try:
-                    location_id = for_search_result['details'][1]['id']
-                    log.info(f"Определена локация в МО с ID: {location_id}")
-                    return f"location[0]={location_id}"
-                except (KeyError, IndexError):
-                    log.warning(f"Не удалось определить точную локацию в МО: {address}")
-                    return "region=4593" 
-
-            else:  
-                for_search_result = self.post_json(
-                    CIAN_GEOCODE_FOR_SEARCH,
-                    {"lat": lat, "lng": lon, "kind": "district"}
-                )
-                
-                try:
-                    district_name = (
-                        for_search_result["details"][2]["fullName"]
-                        .replace("район", "")
-                        .replace("р-н", "")
-                        .strip()
+                    # Определяем конкретный населенный пункт в МО
+                    for_search_result = self.post_json(
+                        CIAN_GEOCODE_FOR_SEARCH,
+                        {"lat": lat, "lng": lon, "kind": "locality"}
                     )
+                    
+                    # Проверяем структуру ответа
+                    if for_search_result and "details" in for_search_result and len(for_search_result["details"]) > 1:
+                        location_id = for_search_result['details'][1]['id']
+                        location_name = for_search_result['details'][1].get('fullName', 'Неизвестно')
+                        log.info(f"Определена локация в МО: {location_name} (ID: {location_id})")
+                        result = f"location[0]={location_id}"
+                        
+                        # Сохраняем в кэш
+                        if hasattr(self, '_address_filter_cache'):
+                            self._address_filter_cache[address] = result
+                        return result
+                    else:
+                        log.warning(f"Некорректная структура ответа для населенного пункта в МО")
+                except (KeyError, IndexError, Exception) as e:
+                    log.warning(f"Ошибка при определении локации в МО: {e}")
+                
+                # Если не удалось определить конкретный населенный пункт
+                return "region=4593"
+                
+            # Логика для Москвы
+            else:
+                log.info("Определен регион: Москва")
+                
+                try:
+                    # Пытаемся определить район в Москве
+                    for_search_result = self.post_json(
+                        CIAN_GEOCODE_FOR_SEARCH,
+                        {"lat": lat, "lng": lon, "kind": "district"}
+                    )
+                    
+                    # Проверка наличия района в ответе
+                    if (for_search_result and "details" in for_search_result and 
+                        len(for_search_result["details"]) > 2 and 
+                        "fullName" in for_search_result["details"][2]):
+                        
+                        # Извлекаем имя района
+                        district_name = (
+                            for_search_result["details"][2]["fullName"]
+                            .replace("район", "")
+                            .replace("р-н", "")
+                            .strip()
+                        )
 
-                    district_id = moscow_district_name_to_cian_id.get(district_name)
-                    if district_id:
-                        log.info(f"Определен район Москвы: {district_name} (ID: {district_id})")
-                        return f"district[0]={district_id}"
-                except (KeyError, IndexError):
-                    pass
-
+                        # Ищем ID района в справочнике
+                        district_id = moscow_district_name_to_cian_id.get(district_name)
+                        if district_id:
+                            log.info(f"Определен район Москвы: {district_name} (ID: {district_id})")
+                            result = f"district[0]={district_id}"
+                            
+                            # Сохраняем в кэш
+                            if hasattr(self, '_address_filter_cache'):
+                                self._address_filter_cache[address] = result
+                            return result
+                        else:
+                            log.warning(f"Район '{district_name}' не найден в справочнике")
+                    else:
+                        log.info("Район не найден в структуре ответа API")
+                        
+                except (KeyError, IndexError, Exception) as e:
+                    log.warning(f"Ошибка при определении района: {e}")
+                
+                # План Б: Ищем упоминание любого района в адресе
                 for district_name, district_id in moscow_district_name_to_cian_id.items():
-                    if district_name.lower() in address.lower():
+                    if district_name.lower() in address_lower:
                         log.info(f"Найден район в адресе: {district_name}")
-                        return f"district[0]={district_id}"
-
+                        result = f"district[0]={district_id}"
+                        
+                        # Сохраняем в кэш
+                        if hasattr(self, '_address_filter_cache'):
+                            self._address_filter_cache[address] = result
+                        return result
+                
+                # План В: Используем расширенный нечеткий поиск
+                def key_function(pair):
+                    # Если район найден в адресе, вернем его позицию, иначе - длину адреса (= не найден)
+                    return index if (index := address_lower.find(pair[0].lower())) != -1 else len(address_lower)
+                
+                try:
+                    # Находим район, который с наибольшей вероятностью соответствует адресу
+                    found_district_name_and_id = min(
+                        moscow_district_name_to_cian_id.items(),
+                        key=key_function
+                    )
+                    
+                    # Если действительно нашли соответствие
+                    if key_function(found_district_name_and_id) < len(address_lower):
+                        district_name, district_id = found_district_name_and_id
+                        log.info(f"Нечеткое соответствие района: {district_name}")
+                        result = f"district[0]={district_id}"
+                        
+                        # Сохраняем в кэш
+                        if hasattr(self, '_address_filter_cache'):
+                            self._address_filter_cache[address] = result
+                        return result
+                except Exception as e:
+                    log.warning(f"Ошибка при нечетком поиске района: {e}")
+                
+                # План Г: Если район не определили - пробуем улицу
                 try:
                     for_search_result = self.post_json(
                         CIAN_GEOCODE_FOR_SEARCH,
                         {"lat": lat, "lng": lon, "kind": "street"}
                     )
-                    street_id = for_search_result['details'][-1]['id']
-                    log.info(f"Определена улица с ID: {street_id}")
-                    return f"street[0]={street_id}"
-                except (KeyError, IndexError):
-                    pass
-
-                log.warning(f"Не удалось определить точное местоположение в Москве для: {address}")
-                return "region=1"  
-
+                    
+                    if "details" in for_search_result and len(for_search_result["details"]) > 0:
+                        street_id = for_search_result['details'][-1]['id']
+                        street_name = for_search_result['details'][-1].get('fullName', 'Неизвестно')
+                        log.info(f"Определена улица: {street_name} (ID: {street_id})")
+                        result = f"street[0]={street_id}"
+                        
+                        # Сохраняем в кэш
+                        if hasattr(self, '_address_filter_cache'):
+                            self._address_filter_cache[address] = result
+                        return result
+                    else:
+                        log.warning("Структура ответа для улицы некорректна")
+                except (KeyError, IndexError, Exception) as e:
+                    log.warning(f"Ошибка при определении улицы: {e}")
+            
         except Exception as e:
-            log.exception(f"Ошибка при определении фильтра для адреса {address}: {e}")
-            return "region=1" 
+            log.exception(f"❌ Общая ошибка при определении фильтра для адреса {address}: {e}")
+        
+        # Если все методы не сработали, используем общий фильтр по региону
+        final_region = "region=4593" if "область" in address_lower else "region=1"
+        log.warning(f"⚠️ Не удалось определить точное местоположение для: {address}, используем {final_region}")
+        
+        # Сохраняем даже дефолтное значение в кэш, чтобы не повторять ошибку
+        if hasattr(self, '_address_filter_cache'):
+            self._address_filter_cache[address] = final_region
+        
+        return final_region
     
     def extract_offer_data(self, offer_url, offer_page, lot_uuid, offer_type):
-        """Извлекает данные объявления из страницы"""
+        """Извлекает данные с отдельной страницы объявления в стиле parsing_torgi_and_cian.py"""
         try:
-            script_match = re.search(r'window\._cianConfig\[\'frontend-offer-card\'\]\.concat\((.*?)\);', offer_page)
+            # Извлекаем ID объявления для логов
+            offer_id = offer_url.split('/')[-2] if offer_url.endswith('/') else offer_url.split('/')[-1]
+            log.info(f"Извлечение данных объявления {offer_id}")
             
-            if not script_match:
+            # Сохраняем страницу для отладки
+            debug_file = os.path.join(LOG_DIR, f"detail_page_{offer_id}_{int(time.time())}.html")
+            with open(debug_file, "w", encoding="utf-8") as f:
+                f.write(f"<!-- URL: {offer_url} -->\n{offer_page}")
+            
+            # ВАЖНО: Используем BeautifulSoup как в parsing_torgi_and_cian.py
+            offer_soup = BeautifulSoup(offer_page, features="lxml")
+
+            try:
+                script_tag = next(
+                    tag
+                    for tag in offer_soup.find_all("script")
+                    if "window._cianConfig['frontend-offer-card']" in tag.text
+                )
+            except StopIteration:
                 log.warning(f"Не найден скрипт с данными объявления в {offer_url}")
                 return None
-                
-            json_text = script_match.group(1)
-            config = json.loads(json_text)
+
+            config_json_string = (
+                script_tag.text.strip().split(".concat(", 1)[1].rsplit(");", 1)[0]
+            )
+            config_json = json.loads(config_json_string)
+            offer_info = next(
+                filter(lambda block: block["key"] == "defaultState", config_json)
+            )["value"]
             
-            state_block = next((block for block in config if "key" in block and block["key"] == "defaultState"), None)
-            if not state_block:
-                log.warning(f"Не найден блок defaultState в {offer_url}")
-                return None
-                
-            state = state_block["value"]
-            
-            if "offerData" not in state or "offer" not in state["offerData"]:
+            # Извлекаем данные предложения
+            if "offerData" not in offer_info or "offer" not in offer_info["offerData"]:
                 log.warning(f"Не найдены данные объявления в {offer_url}")
                 return None
-                
-            offer_data = state["offerData"]["offer"]
+                    
+            offer_data = offer_info["offerData"]["offer"]
             
+            # Извлекаем площадь
             area = 0
             if "land" in offer_data:
                 unit = offer_data["land"].get("areaUnitType", "")
@@ -1013,133 +783,29 @@ class CianParser:
                 log.warning(f"Некорректная площадь в {offer_url}")
                 return None
             
+            # Извлекаем цену
             price = 0
             if offer_type.startswith("sale"):
                 price = offer_data.get("priceTotalRur", 0)
             else:
                 price = offer_data.get("priceTotalPerMonthRur", 0)
-                
+                    
             if price <= 0:
                 log.warning(f"Некорректная цена в {offer_url}")
                 return None
-                        
-            # Улучшенный механизм получения полного адреса
-            address = ""
+            
+            # Извлекаем адрес ТОЧНО КАК в parsing_torgi_and_cian.py
             try:
-                # Попытка получить полный адрес из данных объявления
-                if offer_data.get("address"):
-                    full_address_parts = []
-                    
-                    # Получаем регион (Москва или другой)
-                    geo_data = offer_data.get("geo", {})
-                    if "address" in geo_data:
-                        address_components = geo_data["address"]
-                        # Собираем адрес из компонентов
-                        region = next((item.get("title") for item in address_components if item.get("type") == "location"), "")
-                        if region:
-                            full_address_parts.append(region)
-                    
-                    # Добавляем район, если есть
-                    district = ""
-                    for component in offer_data.get("geo", {}).get("districtsInfo", []):
-                        if "name" in component:
-                            district = component["name"]
-                            if district:
-                                full_address_parts.append(f"район {district}")
-                                break
-                    
-                    # Добавляем улицу
-                    street = offer_data.get("address", {}).get("street", "")
-                    if street:
-                        full_address_parts.append(street)
-                    
-                    # Добавляем номер дома
-                    house_number = offer_data.get("address", {}).get("house", "")
-                    if house_number:
-                        full_address_parts.append(f"дом {house_number}")
-                    
-                    # Собираем полный адрес
-                    if full_address_parts:
-                        address = ", ".join(full_address_parts)
+                address = offer_info["adfoxOffer"]["response"]["data"]["unicomLinkParams"]["puid14"]
+                log.info(f"📍 Получен адрес из adfoxOffer: {address}")
+            except (KeyError, TypeError):
+                log.warning(f"❌ Не удалось получить адрес через стандартный путь для {offer_url}")
+                address = "Москва"  # Дефолтное значение
+            
+            # Префикс источника
                 
-                # Если не удалось получить адрес из данных, пробуем извлечь из DOM
-                if not address or len(address) < 10:
-                    address_js = """
-                    (function() {
-                        // Специальная функция для извлечения адреса из DOM
-                        function findAddressInText(text) {
-                            const patterns = [
-                                /г\.\s*Москва[^,]*(,\s*[^,]+){1,5}/i,
-                                /Москва[^,]*(,\s*[^,]+){1,5}/i,
-                                /г\.\s*Санкт-Петербург[^,]*(,\s*[^,]+){1,5}/i,
-                                /Санкт-Петербург[^,]*(,\s*[^,]+){1,5}/i
-                            ];
-                            
-                            for (const pattern of patterns) {
-                                const match = text.match(pattern);
-                                if (match) return match[0];
-                            }
-                            return null;
-                        }
-                        
-                        // Ищем адрес по селекторам
-                        const selectors = [
-                            '[data-name="AddressContainer"]',
-                            '[data-name="GeoLabel"]',
-                            '.address--GbMIh',
-                            '.geo-address--U0Sxb',
-                            '.address',
-                            '.location-address',
-                            '.information__address_text'
-                        ];
-                        
-                        for (const selector of selectors) {
-                            const el = document.querySelector(selector);
-                            if (el && el.textContent.trim().length > 5)
-                                return el.textContent.trim();
-                        }
-                        
-                        // Если не нашли по селекторам, ищем в тексте страницы
-                        const allText = document.body.innerText;
-                        const addressInText = findAddressInText(allText);
-                        if (addressInText) return addressInText;
-                        
-                        // Ищем метаданные на странице
-                        const metaTags = document.querySelectorAll('meta[name="description"], meta[property="og:description"]');
-                        for (const tag of metaTags) {
-                            const content = tag.getAttribute('content');
-                            if (content) {
-                                const addressInMeta = findAddressInText(content);
-                                if (addressInMeta) return addressInMeta;
-                            }
-                        }
-                        
-                        return '';
-                    })();
-                    """
-                    extracted_address = self.driver.execute_script(address_js)
-                    if extracted_address and len(extracted_address) > 10:
-                        address = extracted_address
-                        log.info(f"Извлечен адрес из DOM: {address}")
-                    
-            except Exception as e:
-                log.error(f"Ошибка извлечения адреса: {e}")
-            
-            # Гарантируем, что адрес будет заполнен
-            if not address or len(address) < 10:
-                # Используем userInput из geo
-                geo_address = offer_data.get('geo', {}).get('userInput', '')
-                if geo_address and len(geo_address) > 5:
-                    address = f"г. Москва, {geo_address}"
-                    log.info(f"Используем адрес из userInput: {address}")
-                else:
-                    # Берем город из URL и добавляем область видимости
-                    city = "Москва"
-                    if "spb." in offer_url:
-                        city = "Санкт-Петербург"
-                    address = f"г. {city}, {geo_address or 'район не определен'}"
-                    log.warning(f"Используем запасной адрес: {address}")
-            
+            log.info(f"📍 Сохраняем адрес объявления {offer_id}: '{address}'")
+                
             oid = str(offer_data.get("cianId", 0)) or offer_url.split('/')[-2]
             
             return {
@@ -1151,119 +817,75 @@ class CianParser:
                 "type": offer_type.split()[0],
                 "address": address
             }
-            
+                
         except Exception as e:
-            log.exception(f"Ошибка при извлечении данных объявления {offer_url}: {e}")
+            log.exception(f"❌ Ошибка при извлечении данных объявления {offer_url}: {e}")
             return None
     
-    def fetch_nearby_offers(self, search_filter, lot_uuid) -> Tuple[List[Offer], List[Offer]]:
-        """Получает объявления о продаже и аренде по заданному фильтру"""
+    def fetch_nearby_offers(self, search_filter, lot_uuid):
+        """Получает объявления о продаже и аренде с корректными паузами"""
         log.info(f"Запрос предложений для фильтра: {search_filter}")
         
         sale_offers = []
         rent_offers = []
         
-        random_params = f"&ad={random.randint(1000, 9999)}&ts={int(time.time())}"
-        
-        url_templates = [
-            (CIAN_SALE_SEARCH, "sale"),
-            (CIAN_SALE_SEARCH_LAND, "sale land"),
-            (CIAN_RENT_SEARCH, "rent"),
-            (CIAN_RENT_SEARCH_LAND, "rent land")
+        # Обновим порядок запросов и добавим адекватные паузы
+        search_types = [
+            (sale_offers, "sale", CIAN_SALE_SEARCH, "sale offers", 8),  # sale имеет приоритет
+            (rent_offers, "rent", CIAN_RENT_SEARCH, "rent offers", 7),
+            (sale_offers, "sale land", CIAN_SALE_SEARCH_LAND, "sale offers (land)", 6),
+            (rent_offers, "rent land", CIAN_RENT_SEARCH_LAND, "rent offers (land)", 5),
         ]
-        
-        
-        for url_template, offer_type in url_templates:
+        # Точно как в parsing_torgi_and_cian.py
+        for offer_list, offer_type, url_template, tqdm_desc in [
+            (sale_offers, "sale", CIAN_SALE_SEARCH, "sale offers"),
+            (sale_offers, "sale land", CIAN_SALE_SEARCH_LAND, "sale offers (land)"),
+            (rent_offers, "rent", CIAN_RENT_SEARCH, "rent offers"),
+            (rent_offers, "rent land", CIAN_RENT_SEARCH_LAND, "rent offers (land)"),
+        ]:
             log.info(f"Обработка типа объявлений: {offer_type}")
             try:
-                search_url = url_template.format(search_filter) + random_params
-                log.info(f"Поиск {offer_type}: {search_url}")
-                
+                self.driver.delete_all_cookies()
                 self.refresh_main_page()
                 
+                # Серьезная пауза перед важным запросом sale
+                if offer_type == "sale":
+                    time.sleep(10)
+                else:
+                    time.sleep(10)
+                # Формируем URL поиска
+                search_url = url_template.format(search_filter)
+                log.info(f"Поиск {offer_type}: {search_url}")
+                
+                # Обновляем главную страницу для сброса состояния
+                self.refresh_main_page()
+                
+                # Получаем страницу поиска
                 search_page = self.get_page(search_url)
                 if not search_page:
                     log.warning(f"Не удалось получить страницу поиска {offer_type}")
                     continue
                 
+                # Сохраняем страницу для отладки
                 save_debug_info(search_url, search_page, self.driver, f"search_{offer_type}")
                 
+                # Проверяем наличие результатов
                 if "по вашему запросу ничего не найдено" in search_page.lower():
                     log.info(f"Нет результатов для {offer_type}")
                     continue
                 
+                # Получаем объявления
                 extracted_offers = self.extract_offers_from_search_page(
                     search_page, search_url, lot_uuid, offer_type
                 )
                 
-                valid_extracted_offers = []
-                for offer in extracted_offers:
-                    if offer.area <= 0:
-                        offer.area = 1  # Устанавливаем минимальное значение
-                        log.warning(f"Исправлена нулевая площадь для объявления {offer.id}")
+                if offer_type.startswith("sale"):
+                    sale_offers.extend(extracted_offers)
+                else:
+                    rent_offers.extend(extracted_offers)
                     
-                    if offer.price <= 0:
-                        log.warning(f"Пропуск объявления с нулевой ценой: {offer.id}")
-                        continue
-                        
-                    valid_extracted_offers.append(offer)
-                
-                if valid_extracted_offers:
-                    log.info(f"Успешно извлечено {len(valid_extracted_offers)} объявлений {offer_type} со страницы поиска")
-                    if offer_type.startswith("sale"):
-                        sale_offers.extend(valid_extracted_offers)
-                    else:
-                        rent_offers.extend(valid_extracted_offers)
-                    continue  # Переходим к следующему типу, если извлекли достаточно объявлений
-                
-                # Если не удалось извлечь напрямую, используем старый метод
-                # Извлекаем ссылки на объявления
-                offer_urls = []
-                
-                # Пытаемся найти ссылки через регулярное выражение
-                offer_links = re.findall(r'href="(/offer/[^"]+)"', search_page)
-                offer_urls.extend([f"https://www.cian.ru{link}" for link in offer_links])
-                
-                # Также ищем ссылки на продажу/аренду
-                sale_rent_links = re.findall(r'href="(/sale/[^"]+)"', search_page) + re.findall(r'href="(/rent/[^"]+)"', search_page)
-                offer_urls.extend([f"https://www.cian.ru{link}" for link in sale_rent_links])
-                
-                log.info(f"Найдено {len(offer_urls)} ссылок на объявления {offer_type}")
-                
-                # Ограничиваем количество объявлений для анализа
-                offer_urls = offer_urls[:10]
-                
-                # Обрабатываем каждое объявление
-                for offer_url in offer_urls:
-                    try:
-                        # Обновляем главную страницу каждые 3-4 объявления
-                        if random.random() < 0.3:
-                            self.refresh_main_page()
-                        
-                        # Получаем страницу объявления
-                        offer_page = self.get_page(offer_url)
-                        if not offer_page:
-                            continue
-                        
-                        # Извлекаем данные объявления
-                        offer_data = self.extract_offer_data(offer_url, offer_page, lot_uuid, offer_type)
-                        if not offer_data:
-                            continue
-                        
-                        # Создаем объект объявления и добавляем в соответствующий список
-                        offer = Offer(**offer_data)
-                        
-                        if offer_type.startswith("sale"):
-                            sale_offers.append(offer)
-                        else:
-                            rent_offers.append(offer)
-                            
-                    except Exception as e:
-                        log.error(f"Ошибка при обработке объявления {offer_url}: {e}")
-                        continue
-                
             except Exception as e:
-                log.error(f"Общая ошибка при обработке типа {offer_type}: {e}", exc_info=True)
+                log.error(f"Ошибка при обработке типа {offer_type}: {e}")
                 continue
         
         # Удаляем дубликаты

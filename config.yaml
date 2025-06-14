@@ -1,6 +1,6 @@
 # Property search settings
 search_area_granularity: район
-area_search_radius: 5
+area_search_radius: 100
 debug_search_radius: 100
 
 # Processing settings

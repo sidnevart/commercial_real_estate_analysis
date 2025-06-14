@@ -53,9 +53,8 @@ async def _attempt(session: aiohttp.ClientSession, url: str, proxy: str | None) 
 async def _fetch_json(url: str) -> Dict[str, Any]:
     """Получение JSON с учетом прокси и повторных попыток."""
     headers = {"User-Agent": random.choice(UAS)}
-    async with aiohttp.ClientSession(
-        headers=headers, timeout=aiohttp.ClientTimeout(total=PAGELOAD_TIMEOUT)
-    ) as session:
+    timeout = aiohttp.ClientTimeout(total=10, connect=5)  # 5 сек на соединение, 10 сек всего
+    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
         # Сначала пробуем через прокси
         tried: set[str] = set()
         while True:
@@ -172,7 +171,19 @@ async def fetch_lots(max_pages: int = 10) -> List[Lot]:
                     if not detail:
                         logger.warning(f"Нет данных для лота {lot_id}")
                         continue
-                    
+                    valid_torgi_categories = [
+                        "нежилые помещения", "иной объект недвижимости", 
+                        "право размещения нестационарного объекта", "имущественные комплексы",
+                        "единый недвижимый комплекс", "сооружения", "здания", "земельные участки",
+                        "комплексное развитие территорий", "земли сельскохозяйственного назначения",
+                        "земли населенных пунктов", "земельные участки"
+                    ]
+
+                    # После получения данных о лоте, но перед добавлением в список
+                    property_category = detail.get("category", {}).get("name", "").lower()
+                    if not any(category.lower() in property_category for category in valid_torgi_categories):
+                        logger.info(f"Пропуск лота категории '{property_category}' (не соответствует критериям)")
+                        continue
                     # Преобразуем JSON в объект Lot
                     lot = _to_lot(detail)
                     lots.append(lot)

@@ -9,7 +9,7 @@ CONFIG_FILE_PATH = Path(os.path.dirname(os.path.dirname(__file__))) / "config.ya
 # Default configuration values
 DEFAULT_CONFIG = {
     "search_area_granularity": "район",  # district level
-    "area_search_radius": 5,  # km
+    "area_search_radius": 7,  # km
     "daily_check_enabled": True,
     "gpt_analysis_enabled": True,
     "advantage_price_threshold": -30,  # % threshold for highlighting profitable lots

@@ -16,9 +16,10 @@ from parser.cian_minimal import fetch_nearby_offers, unformatted_address_to_cian
 from parser.google_sheets import push_lots, push_offers, push_district_stats
 from parser.gpt_classifier import classify_property  
 from parser.cian_minimal import get_parser
+from parser.geo_utils import filter_offers_by_distance
 from core.models import Lot, Offer, PropertyClassification
 from core.config import CONFIG
-from parser.geo_utils import filter_offers_by_distance
+#from parser.geo_utils import filter_offers_by_distance
 import random
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -572,15 +573,52 @@ def calculate_intermediate_metrics(processed_lots, offers_by_district, current_i
     logging.info(f"✅ Обновлены метрики для {len(updated_lots)} лотов")
     return updated_lots
 
+def estimate_market_value_from_rent(lot, rent_prices_per_sqm):
+    """Оценка рыночной стоимости на основе арендных ставок через метод капитализации."""
+    # Годовой арендный доход
+    median_rent = statistics.median(rent_prices_per_sqm)
+    annual_income = median_rent * 12 * lot.area
+    
+    # Определение подходящей ставки капитализации в зависимости от типа объекта
+    property_type = getattr(lot.classification, 'category', '').lower() if hasattr(lot, 'classification') else ''
+    
+    # Ставки капитализации для разных типов недвижимости (упрощенные)
+    cap_rates = {
+        'офис': 0.09,  # Офисы: 9%
+        'стрит': 0.085,  # Стрит-ритейл: 8.5%
+        'торговое': 0.08,  # Торговые помещения: 8%
+        'склад': 0.095,  # Склады: 9.5%
+        'промышленное': 0.1,  # Промышленные объекты: 10%
+        'земельный': 0.06,  # Земельные участки: 6%
+    }
+    
+    # Подбор ставки капитализации
+    cap_rate = 0.09  # Дефолтное значение - 9%
+    for key, rate in cap_rates.items():
+        if key in property_type:
+            cap_rate = rate
+            break
+    
+    # Расчет рыночной стоимости
+    market_value = annual_income / cap_rate
+    market_price_per_sqm = market_value / lot.area if lot.area > 0 else 0
+    
+    return market_value, market_price_per_sqm
+
 def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offers: List[Offer]):
     """
     Рассчитывает метрики для лота на основе ВСЕХ объявлений, независимо от расстояния.
+    Улучшенная версия с оценкой стоимости через метод капитализации для случаев,
+    когда есть только данные об аренде.
     """
     # Фильтруем предложения только по валидности, а не по расстоянию
     valid_sale_offers = [o for o in all_sale_offers if o.area > 0 and o.price > 0]
     valid_rent_offers = [o for o in all_rent_offers if o.area > 0 and o.price > 0]
     
-    # 1. Рассчитываем рыночную цену на основе всех объявлений
+    # Сохраняем флаг метода оценки
+    lot.market_value_method = "unknown"
+    
+    # 1. Рассчитываем рыночную цену на основе объявлений о продаже
     if valid_sale_offers:
         # Получаем цены за квадратный метр
         prices_per_sqm = [offer.price / offer.area for offer in valid_sale_offers]
@@ -596,6 +634,28 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
             lot.capitalization_rub = lot.market_value - lot.price
             # Капитализация в процентах
             lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
+            # Отмечаем метод оценки
+            lot.market_value_method = "sales"
+    
+    # 2. Если данных о продаже нет, но есть данные об аренде - используем метод капитализации
+    elif valid_rent_offers:
+        # Получаем цены аренды за квадратный метр
+        rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
+        
+        if rent_prices_per_sqm:
+            # Оцениваем рыночную стоимость методом капитализации
+            estimated_market_value, estimated_price_per_sqm = estimate_market_value_from_rent(lot, rent_prices_per_sqm)
+            
+            # Заполняем метрики лота
+            lot.market_price_per_sqm = estimated_price_per_sqm
+            lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
+            lot.market_value = estimated_market_value
+            lot.capitalization_rub = lot.market_value - lot.price
+            lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
+            
+            # Отмечаем метод оценки
+            lot.market_value_method = "capitalization"
+            logging.info(f"Лот {lot.id}: Рыночная стоимость оценена методом капитализации: {lot.market_value:,.0f} ₽")
     else:
         # Инициализация со значениями по умолчанию, если нет данных
         lot.market_price_per_sqm = 0
@@ -603,8 +663,9 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
         lot.market_value = 0
         lot.capitalization_rub = 0
         lot.capitalization_percent = 0
+        lot.market_value_method = "none"
     
-    # 2. Рассчитываем доходность на основе всех объявлений аренды
+    # 3. Рассчитываем доходность на основе объявлений аренды
     if valid_rent_offers:
         rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
         
@@ -616,24 +677,28 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
             lot.monthly_gap = lot.annual_income / 12  # ГАП в месяц
             # Доходность (рыночная) = ГАП годовой / Цена лота * 100%
             lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
+            # Отмечаем наличие арендных данных
+            lot.has_rent_data = True
     else:
         # Если данных об аренде нет, используем рыночное значение для приблизительного расчета
+        lot.has_rent_data = False
         lot.monthly_gap = lot.market_value * 0.007  # Примерно 0.7% в месяц
         lot.annual_income = lot.monthly_gap * 12
         lot.annual_yield_percent = (lot.monthly_gap * 12 / lot.price) * 100 if lot.price > 0 else 0
+        lot.average_rent_price_per_sqm = 0
     
     # Добавим итоговое логирование для удобства отслеживания
     logging.info(f"Лот {lot.id}: Метрики рассчитаны - "
                f"Рыночная цена: {lot.market_price_per_sqm:.0f} ₽/м², "
                f"Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent:.1f}%), "
                f"ГАП: {lot.monthly_gap:,.0f} ₽/мес, "
-               f"Доходность: {lot.annual_yield_percent:.1f}%")
+               f"Доходность: {lot.annual_yield_percent:.1f}%, "
+               f"Метод оценки: {lot.market_value_method}")
 
 # Модифицируем функцию filter_offers_by_distance для использования fallback
 # Заменить функцию filter_offers_by_distance в parser/main.py
-
+"""
 async def filter_offers_by_distance(lot_address: str, offers: List[Offer], max_distance_km: float) -> List[Offer]:
-    """Улучшенная функция фильтрации с надежными резервными механизмами."""
     logger.info(f"🔍 Фильтрация {len(offers)} объявлений для адреса {lot_address[:50]}...")
     
     if not offers:
@@ -704,8 +769,8 @@ async def filter_offers_by_distance(lot_address: str, offers: List[Offer], max_d
         all_raw_offers.extend(offers)
     
     return filtered_offers
-
-
+"""
+from parser.google_sheets import setup_all_headers, push_custom_data
 
 async def main():
     """
@@ -713,6 +778,9 @@ async def main():
     объявления на ЦИАН, рассчитывает метрики и сохраняет результаты.
     """
     try:
+        # Настраиваем заголовки всех таблиц
+        setup_all_headers()
+        
         # Проверяем аргументы командной строки для возобновления
         resume_from_checkpoint = "--resume" in sys.argv
         
@@ -722,8 +790,8 @@ async def main():
         lot_save_interval = CONFIG.get("lot_save_interval", 5)
         
         # Добавляем поддержку отладочного радиуса
-        debug_radius = CONFIG.get("debug_search_radius", 0)  # Радиус для отладки
-        search_radius = CONFIG.get("area_search_radius", 5)  # Радиус поиска в км
+        debug_radius = CONFIG.get("debug_search_radius", 3)  # Радиус для отладки - изменено на 3 км
+        search_radius = CONFIG.get("area_search_radius", 3)  # Радиус поиска - изменено на 3 км
         
         # Глобальные коллекции для хранения данных
         all_sale_offers = []
@@ -793,6 +861,10 @@ async def main():
                 sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot_uuid)
                 logging.info(f"Получено {len(sale_offers)} объявлений о продаже и {len(rent_offers)} объявлений об аренде")
                 
+                # Добавляем счетчики к лоту
+                lot.sale_offers_count = len(sale_offers)
+                lot.rent_offers_count = len(rent_offers)
+                
                 # Обновляем счетчик браузерных операций и перезагружаем если нужно
                 browser_operations += 1
                 if browser_operations >= browser_refresh_interval:
@@ -822,12 +894,12 @@ async def main():
                 # Увеличиваем радиус, если не хватает объявлений
                 if not debug_radius and (len(sale_offers) < 3 or len(rent_offers) < 3) and search_radius < 10:
                     logging.info(f"Увеличиваем радиус поиска до 10 км из-за малого количества объявлений")
-                    effective_radius = 10
+                    effective_radius = 7
                     
                 # Если нет объявлений вообще, используем особый режим
                 if not sale_offers and not rent_offers and not debug_radius:
                     logging.warning("⚠️ Нет объявлений, включаем режим отладки (радиус 1000 км)")
-                    effective_radius = 1000
+                    effective_radius = 10
                 
                 # Фильтруем объявления по расстоянию от лота
                 logging.info(f"Фильтрация объявлений по расстоянию (макс. {effective_radius} км) для лота {lot.id}")
@@ -950,7 +1022,6 @@ async def main():
             logging.info("✅ Сохранено состояние для отладки")
         except Exception as dump_error:
             logging.error(f"❌ Не удалось сохранить состояние: {dump_error}")
-
             
 if __name__ == "__main__":
     asyncio.run(main())

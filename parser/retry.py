@@ -3,7 +3,7 @@ from functools import wraps
 from inspect import iscoroutinefunction
 from typing import Callable, Any
 
-def retry(retries: int = 5, base_delay: float = 2.0, *, exceptions: tuple[type[Exception], ...] = (Exception,)):
+def retry(retries: int = 5, base_delay: float = 0.5, *, exceptions: tuple[type[Exception], ...] = (Exception,)):
     """Unified sync / async retry with exponential backoff."""
     def decorator(func: Callable[..., Any]):
         if iscoroutinefunction(func):
