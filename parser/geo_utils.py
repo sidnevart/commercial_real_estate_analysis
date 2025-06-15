@@ -4,22 +4,12 @@ import asyncio
 import logging
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
+from core.models import Offer
 
 import openrouteservice
 from openrouteservice import Client
 
 # — Offer dataclass
-@dataclass(slots=True)
-class Offer:
-    id: str
-    lot_uuid: str
-    price: float
-    area: float
-    url: str
-    type: str
-    address: str = ""
-    district: str = ""
-    distance_to_lot: float = 0.0
 
 # — Logger
 logging.basicConfig(
@@ -37,12 +27,11 @@ async def run_sync(func, *args, **kwargs):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
-
 # — Geocoding via OpenRouteService Pelias
 async def get_coords_by_address(address: str) -> Optional[Tuple[float, float]]:
-    """
-    Возвращает (lon, lat) для заданного адреса через ORS Pelias.
-    """
+    
+    # Возвращает (lon, lat) для заданного адреса через ORS Pelias.
+    
     if not address:
         logger.warning("get_coords_by_address: пустой адрес")
         return None
@@ -62,20 +51,22 @@ async def get_coords_by_address(address: str) -> Optional[Tuple[float, float]]:
         return None
 
 
+
 # — Distance calculation via ORS Matrix
 async def calculate_distance(origin: Tuple[float, float], dest: Tuple[float, float]) -> Optional[float]:
-    """
-    Возвращает расстояние в километрах между двумя точками через ORS distance_matrix.
-    """
+    
+    #Возвращает расстояние в километрах между двумя точками через ORS distance_matrix.
+
     logger.info(f"Calculating distance via ORS matrix: {origin} → {dest}")
     try:
         def ors_matrix(o, d):
             matrix = ors_client.distance_matrix(
                 locations=[o, d],
+                profile='foot-walking',  # Можно изменить на 'driving-car' или другой профиль
                 metrics=["distance"],
-                units="km"
+                units="m"
             )
-            return matrix["distances"][0][1]
+            return matrix["distances"][0][1] / 1000
         dist = await run_sync(ors_matrix, origin, dest)
         logger.info(f"ORS matrix distance: {dist:.2f} km")
         return dist
@@ -90,10 +81,10 @@ async def filter_offers_by_distance(
     offers: List[Offer],
     max_distance_km: float
 ) -> List[Offer]:
-    """
-    Геокодирует lot_address и адреса offers через ORS,
-    считает расстояние matrix и оставляет только те, что <= max_distance_km.
-    """
+    
+    #Геокодирует lot_address и адреса offers через ORS,
+    #считает расстояние matrix и оставляет только те, что <= max_distance_km.
+    
     logger.info(f"filter_offers_by_distance: lot_address='{lot_address}', max_distance={max_distance_km} km")
 
     lot_coords = await get_coords_by_address(lot_address)
@@ -126,6 +117,7 @@ async def filter_offers_by_distance(
 
     logger.info(f"filter_offers_by_distance: {len(filtered)} of {len(offers)} offers within {max_distance_km} km")
     return filtered
+
 
 """
 # — Тестовый блок

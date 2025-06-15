@@ -1,7 +1,7 @@
 # Property search settings
 search_area_granularity: район
-area_search_radius: 100
-debug_search_radius: 100
+area_search_radius: 7
+debug_search_radius: 7
 
 # Processing settings
 daily_check_enabled: true
