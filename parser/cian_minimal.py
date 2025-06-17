@@ -547,95 +547,118 @@ class CianParser:
 
     def unformatted_address_to_cian_search_filter(self, address: str) -> str:
         """
-        Преобразует адрес в параметр поискового фильтра ЦИАН.
+        Улучшенный алгоритм преобразования адреса в параметр поискового фильтра ЦИАН.
         
-        Алгоритм:
-        1. Сначала проверяем кэш, чтобы не делать лишних запросов
-        2. Выполняем стандартизацию адреса (замена сокращений и т.д.)
-        3. Проверяем простые случаи (явно указана Москва/МО)
-        4. Выполняем геокодирование адреса через API ЦИАН
-        5. Для МО ищем конкретный населенный пункт
-        6. Для Москвы ищем сначала район
-        7. Если район не найден - ищем улицу
-        8. В случае неудачи возвращаемся на уровень региона
+        Теперь учитывает:
+        - административные районы города
+        - микрорайоны, деревни, посёлки
+        - муниципальные округа
+        - городские округа
         
         Args:
             address: Текстовый адрес объекта
-            
+                
         Returns:
             Строка параметра для поискового URL ЦИАН
         """
-        # Инициализация кэша, если он еще не существует
+        # Проверка кэша
         if not hasattr(self, '_address_filter_cache'):
             self._address_filter_cache = {}
-            
-        # Проверка кэша для повторяющихся адресов
+                
         if address in self._address_filter_cache:
             log.info(f"Кэш: Использован сохраненный фильтр для адреса «{address}»")
             return self._address_filter_cache[address]
-            
+                
         log.info(f"Определение поискового фильтра для адреса: «{address}»")
         
-        # Нормализация адреса
-        normalized_address = address
-        for old, new in address_replacements.items():
-            normalized_address = normalized_address.replace(old, new)
+        # Расширенные замены для нормализации адреса
+        extended_replacements = {
+            "р-н": "район", "пр-кт": "проспект", "пр-т": "проспект",
+            "г.о.": "городской округ", "г/о": "городской округ",
+            "мкр.": "микрорайон", "мкрн.": "микрорайон", "мкрн": "микрорайон", "мкр": "микрорайон",
+            "п.": "посёлок", "пос.": "посёлок", "поселок": "посёлок",
+            "д.": "деревня", "дер.": "деревня",
+            "с.": "село", "пгт": "посёлок городского типа", "пгт.": "посёлок городского типа",
+            "б-р": "бульвар", "бул.": "бульвар", 
+            "обл.": "область", "обл": "область",
+            "г.": "город", "гор.": "город"
+        }
         
-        # Базовые быстрые проверки по ключевым словам
+        # Нормализация адреса - более тщательная обработка
+        normalized_address = address
+        
+        # Расширенная замена сокращений
+        for old, new in extended_replacements.items():
+            # Добавляем пробел после замены, если после сокращения не было пробела
+            pattern = rf'\b{re.escape(old)}(?!\s)'
+            normalized_address = re.sub(pattern, f"{new} ", normalized_address)
+            
+            # Стандартная замена с пробелами
+            normalized_address = re.sub(rf'\b{re.escape(old)}\s', f"{new} ", normalized_address)
+        
+        # Убираем лишние пробелы
+        normalized_address = re.sub(r'\s+', ' ', normalized_address).strip()
+        
+        log.info(f"Нормализованный адрес: «{normalized_address}»")
+        
+        # Работа с нижним регистром для анализа
         address_lower = normalized_address.lower()
         
-        # 1. Проверка на наличие конкретного района в адресе
-        for district_name, district_id in moscow_district_name_to_cian_id.items():
-            district_lower = district_name.lower()
-            
-            # Шаблоны для поиска района (с разными вариантами написания)
-            district_patterns = [
-                f"район {district_lower}",
-                f"{district_lower} район", 
-                f"р-н {district_lower}",
-                f"{district_lower} р-н",
-                f"р. {district_lower}",
-                f"{district_lower},"  # Часто район указывается перед запятой
-            ]
-            
-            # Проверяем все шаблоны
-            if any(pattern in address_lower for pattern in district_patterns):
-                result = f"district[0]={district_id}"
-                log.info(f"Точное совпадение: найден район «{district_name}» (ID: {district_id})")
-                
-                # Сохраняем в кэш
-                self._address_filter_cache[address] = result
-                return result
+        # Определение региона (Москва или МО)
+        is_likely_moscow = any(marker in address_lower for marker in 
+                            ["москва", "вао", "юао", "сао", "зао", "цао", "свао", "юзао", "сзао"])
+        is_likely_mo = any(marker in address_lower for marker in 
+                            ["московская область", "область московская", "мо", "подмоск"])
         
-        # Проверка наличия важных признаков в адресе
-        is_likely_moscow = any(marker in address_lower for marker in ["москва", "вао", "юао", "сао", "зао", "цао", "свао", "юзао", "сзао"])
-        is_likely_mo = any(marker in address_lower for marker in ["область", "мо", "подмоск", "подольск", "химки", "мытищи", "балашиха"])
+        # Базовый регион по умолчанию
+        default_result = "region=1" if is_likely_moscow else "region=4593" if is_likely_mo else None
         
-        # 2. Подготовка результата по умолчанию на случай ошибок
-        default_result = None
-        
-        if is_likely_moscow:
-            default_result = "region=1"
-            log.info("Базовое определение региона: Москва")
-        elif is_likely_mo:
-            default_result = "region=4593" 
-            log.info("Базовое определение региона: Московская область")
-        else:
-            # Если регион явно не определен, попробуем угадать по первым словам адреса
-            first_words = address_lower.split(',')[0].strip().split()
-            if first_words and first_words[0] == "москва":
+        # Если регион не определен, пробуем по первым словам
+        if not default_result:
+            first_part = address_lower.split(',')[0].strip()
+            if "москва" in first_part:
                 default_result = "region=1"
-                log.info("Базовое определение региона по первому слову: Москва")
-            elif first_words and "область" in first_words[:3]:
+            elif "область" in first_part and "московск" in first_part:
                 default_result = "region=4593"
-                log.info("Базовое определение региона по началу адреса: Московская область")
+            else:
+                default_result = "region=4593"  # По умолчанию считаем, что это МО
         
+        # ИЗВЛЕЧЕНИЕ НАСЕЛЕННЫХ ПУНКТОВ
+        # Паттерны для выявления населенных пунктов в МО
+        settlement_patterns = {
+            'village': r'деревня\s+([А-Яа-яЁё\-]+)',            # деревня Пешково
+            'settlement': r'посёлок\s+([А-Яа-яЁё\-]+)',         # посёлок Новый
+            'micro_district': r'микрорайон\s+([А-Яа-яЁё\-]+)',  # микрорайон Южный
+            'city': r'город\s+([А-Яа-яЁё\-]+)',                # город Химки
+            'urban_settlement': r'городское поселение\s+([А-Яа-яЁё\-]+)',  # городское поселение Одинцово
+            'rural_settlement': r'сельское поселение\s+([А-Яа-яЁё\-]+)',    # сельское поселение Ершовское
+            # Короткие обозначения, где тип населенного пункта указан после имени
+            'short_village': r'\s+д\.\s*([А-Яа-яЁё\-]+)',      # д. Пешково или д Пешково
+            'short_city': r'\s+г\.\s*([А-Яа-яЁё\-]+)',         # г. Химки или г Химки
+            'short_settlement': r'\s+п\.\s*([А-Яа-яЁё\-]+)',    # п. Новый или п Новый
+        }
+        
+        # Поиск населенных пунктов в адресе
+        extracted_settlements = {}
+        
+        for settlement_type, pattern in settlement_patterns.items():
+            matches = re.findall(pattern, address_lower)
+            if matches:
+                for match in matches:
+                    extracted_settlements[match.strip()] = settlement_type
+                    log.info(f"Найден населенный пункт: {match} (тип: {settlement_type})")
+        
+        # Поиск городских округов МО
+        mo_city_districts = re.findall(r'городской округ\s+([А-Яа-яЁё\-]+)', address_lower)
+        if mo_city_districts:
+            log.info(f"Найден городской округ МО: {mo_city_districts[0]}")
+        
+        # ГЕОКОДИРОВАНИЕ
         try:
-            # 3. Геокодирование через API ЦИАН
+            # Вызов API геокодирования
             geocoding_response = self.get_json(CIAN_GEOCODE.format(normalized_address))
             
-            # Поиск подходящего результата геокодирования
-            geocoding_result = None
+            # Сортировка результатов геокодирования
             moscow_items = []
             mo_items = []
             
@@ -646,249 +669,236 @@ class CianParser:
                 elif "Россия, Московская область" in item_text:
                     mo_items.append(item)
             
-            # Приоритизация результатов: сначала точные совпадения по региону
-            if is_likely_moscow and moscow_items:
+            # Выбираем приоритетный результат геокодирования
+            if is_likely_mo and mo_items:
+                # Для Московской области - отдаем приоритет результатам, содержащим найденный населенный пункт
+                if extracted_settlements:
+                    # Проверяем каждый результат на наличие найденного населенного пункта
+                    for settlement_name in extracted_settlements:
+                        for item in mo_items:
+                            if settlement_name in item.get("text", "").lower():
+                                geocoding_result = item
+                                log.info(f"Приоритет: результат с населенным пунктом '{settlement_name}'")
+                                break
+                        if 'geocoding_result' in locals():
+                            break
+                
+                # Если не нашли по населенному пункту, берем первый результат по МО
+                if 'geocoding_result' not in locals():
+                    geocoding_result = mo_items[0]
+                    log.info(f"Используем первый результат по МО: {geocoding_result['text']}")
+                    
+            elif is_likely_moscow and moscow_items:
                 geocoding_result = moscow_items[0]
-                log.info(f"Приоритетный результат геокодирования (Москва): {geocoding_result['text']}")
-            elif is_likely_mo and mo_items:
+                log.info(f"Приоритетный результат для Москвы: {geocoding_result['text']}")
+            elif mo_items:  # Предполагаем, что это МО, если не указано иное
                 geocoding_result = mo_items[0]
-                log.info(f"Приоритетный результат геокодирования (МО): {geocoding_result['text']}")
-            # Если нет приоритета, берём первый подходящий результат
+                log.info(f"По умолчанию используем результат для МО: {geocoding_result['text']}")
             elif moscow_items:
                 geocoding_result = moscow_items[0]
-                log.info(f"Результат геокодирования (Москва): {geocoding_result['text']}")
-            elif mo_items:
-                geocoding_result = mo_items[0]
-                log.info(f"Результат геокодирования (МО): {geocoding_result['text']}")
+                log.info(f"По умолчанию используем результат для Москвы: {geocoding_result['text']}")
             else:
-                # Попробуем взять любой первый результат, если он относится к Москве или МО
+                # Если нет результатов для Москвы/МО, ищем любой подходящий
                 for item in geocoding_response.get("items", []):
                     item_text = item.get("text", "")
-                    if item_text.startswith("Россия, Моск"):
+                    if item_text.startswith("Россия"):
                         geocoding_result = item
-                        log.info(f"Результат геокодирования (общий): {item_text}")
+                        log.info(f"Используем общий результат: {item_text}")
                         break
                         
-            # Если вообще ничего не нашли
-            if not geocoding_result:
-                log.warning(f"Не найдено геокодирование для адреса: {address}")
-                final_result = default_result or ("region=4593" if is_likely_mo else "region=1")
-                self._address_filter_cache[address] = final_result
-                return final_result
+            # Если геокодирование не удалось - возвращаем регион по умолчанию
+            if 'geocoding_result' not in locals():
+                log.warning(f"Не удалось геокодировать адрес: {address}")
+                self._address_filter_cache[address] = default_result
+                return default_result
 
-            # 4. Получаем координаты
+            # Получаем координаты для дальнейшего уточнения
             lon, lat = geocoding_result.get("coordinates", [0, 0])
+            
+            # Проверка валидности координат
             if lon == 0 or lat == 0:
-                log.warning("Получены нулевые координаты, используем регион по умолчанию")
-                final_result = default_result or ("region=4593" if is_likely_mo else "region=1")
-                self._address_filter_cache[address] = final_result
-                return final_result
+                log.warning(f"Получены нулевые координаты для адреса: {address}")
+                self._address_filter_cache[address] = default_result
+                return default_result
                 
-            # 5. Логика для Московской области
+            # ОПРЕДЕЛЕНИЕ ФИЛЬТРА ПО РЕГИОНУ
+            
+            # Для Московской области
             if "Московская область" in geocoding_result.get("text", ""):
-                log.info("Определен регион: Московская область")
+                log.info("Обработка адреса Московской области")
                 
+                # Стратегия 1: Попытка определить конкретный населенный пункт
                 try:
-                    # Определяем конкретный населенный пункт в МО
-                    for_search_result = self.post_json(
+                    # Запрос к API для определения локации для поиска
+                    api_result = self.post_json(
                         CIAN_GEOCODE_FOR_SEARCH,
                         {"lat": lat, "lng": lon, "kind": "locality"}
                     )
                     
-                    # Проверяем структуру ответа и наличие информации о населенном пункте
-                    if for_search_result and "details" in for_search_result:
-                        details = for_search_result["details"]
+                    if api_result and "details" in api_result:
+                        # Ищем подходящий населенный пункт или город в ответе API
+                        location_found = False
+                        details = api_result.get("details", [])
                         
-                        # Ищем самый конкретный уровень локации (обычно индекс 1)
-                        location_data = None
+                        # Ищем самый конкретный уровень - с конца списка деталей
                         for i in range(len(details)-1, 0, -1):
-                            # Пропускаем элементы без ID
-                            if details[i].get("id") and "fullName" in details[i]:
-                                location_data = details[i]
-                                break
-                        
-                        if location_data:
-                            location_id = location_data['id']
-                            location_name = location_data.get('fullName', 'Неизвестно')
-                            log.info(f"Определена локация в МО: {location_name} (ID: {location_id})")
-                            result = f"location[0]={location_id}"
+                            current = details[i]
+                            if not current.get("id"):
+                                continue
+                                
+                            # Получаем название и тип локации
+                            location_name = current.get("fullName", "").lower()
+                            location_id = current.get("id")
                             
-                            # Сохраняем в кэш
+                            # Проверяем, совпадает ли локация с ранее найденными населенными пунктами
+                            match_found = False
+                            for extracted_name in extracted_settlements:
+                                # Проверяем вхождение или нечеткое совпадение
+                                if extracted_name in location_name or fuzz.ratio(extracted_name, location_name) > 85:
+                                    match_found = True
+                                    log.info(f"Найдено соответствие: '{extracted_name}' в '{location_name}'")
+                                    break
+                            
+                            # Если нашли соответствие или это явный населенный пункт
+                            is_settlement = any(marker in location_name for marker in 
+                                            ["город", "деревня", "посёлок", "село", "микрорайон"])
+                                        
+                            if match_found or is_settlement or i == len(details)-1:  # Последний элемент - самый конкретный
+                                log.info(f"Определена локация в МО: {location_name} (ID: {location_id})")
+                                result = f"location[0]={location_id}"
+                                self._address_filter_cache[address] = result
+                                return result
+                        
+                        # Если дошли сюда - локация не найдена по критериям, берем первый элемент
+                        if details and len(details) > 1 and "id" in details[1]:
+                            location_id = details[1]["id"]
+                            location_name = details[1].get("fullName", "Неизвестно")
+                            log.info(f"Используем общую локацию в МО: {location_name} (ID: {location_id})")
+                            result = f"location[0]={location_id}"
                             self._address_filter_cache[address] = result
                             return result
-                        else:
-                            log.warning("Не найдены данные о локации в ответе API")
                     else:
-                        log.warning(f"Некорректная структура ответа для населенного пункта в МО")
-                except (KeyError, IndexError, Exception) as e:
+                        log.warning("API не вернул информацию о локации")
+                
+                except Exception as e:
                     log.warning(f"Ошибка при определении локации в МО: {e}")
                 
-                # Если не удалось определить конкретный населенный пункт
-                final_result = "region=4593"
-                self._address_filter_cache[address] = final_result
-                return final_result
-                
-            # 6. Логика для Москвы
+                # Если не удалось определить конкретную локацию - используем весь регион МО
+                result = "region=4593"
+                self._address_filter_cache[address] = result
+                return result
+            
+            # Для Москвы
             else:
-                log.info("Определен регион: Москва")
+                log.info("Обработка адреса Москвы")
                 
+                # Стратегия 1: Пытаемся определить район Москвы
                 try:
-                    # 6.1 Пытаемся определить район в Москве
-                    for_search_result = self.post_json(
+                    api_result = self.post_json(
                         CIAN_GEOCODE_FOR_SEARCH,
                         {"lat": lat, "lng": lon, "kind": "district"}
                     )
                     
-                    # Проверка наличия района в ответе
-                    if (for_search_result and "details" in for_search_result):
-                        details = for_search_result["details"]
+                    if api_result and "details" in api_result:
+                        details = api_result["details"]
                         
-                        # Находим элемент с районом (обычно индекс 2)
-                        district_data = None
+                        # Ищем район (обычно в элементе 2)
+                        district_found = False
+                        
+                        # Перебираем с конца для поиска наиболее конкретного уровня
                         for i in range(len(details)-1, 1, -1):
                             if i < len(details) and "fullName" in details[i]:
                                 name_lower = details[i]["fullName"].lower()
-                                if "район" in name_lower or "р-н" in name_lower:
-                                    district_data = details[i]
-                                    break
+                                
+                                # Проверка на наличие слова "район" или похожих в названии
+                                if any(marker in name_lower for marker in ["район", "р-н"]):
+                                    # Извлекаем имя района
+                                    district_name = (
+                                        details[i]["fullName"]
+                                        .replace("район", "")
+                                        .replace("р-н", "")
+                                        .strip()
+                                    )
+                                    
+                                    # Поиск района в справочнике
+                                    district_id = moscow_district_name_to_cian_id.get(district_name)
+                                    
+                                    # Если не нашли прямое совпадение, используем нечеткий поиск
+                                    if not district_id:
+                                        match = process.extractOne(
+                                            district_name,
+                                            moscow_district_name_to_cian_id.keys(),
+                                            scorer=fuzz.token_sort_ratio,
+                                            score_cutoff=80
+                                        )
+                                        
+                                        if match:
+                                            district_name = match[0]
+                                            district_id = moscow_district_name_to_cian_id[district_name]
+                                    
+                                    if district_id:
+                                        log.info(f"Определен район Москвы: {district_name} (ID: {district_id})")
+                                        result = f"district[0]={district_id}"
+                                        district_found = True
+                                        self._address_filter_cache[address] = result
+                                        return result
                         
-                        if district_data:
-                            # Извлекаем имя района
-                            district_name = (
-                                district_data["fullName"]
-                                .replace("район", "")
-                                .replace("р-н", "")
-                                .strip()
-                            )
-
-                            # Ищем ID района в справочнике (прямое совпадение)
-                            district_id = moscow_district_name_to_cian_id.get(district_name)
-                            
-                            # Если не нашли прямое совпадение, ищем нечеткое
-                            if not district_id:
-                                # Нечеткий поиск по именам районов
-                                match = process.extractOne(
-                                    district_name, 
-                                    moscow_district_name_to_cian_id.keys(),
-                                    scorer=fuzz.token_sort_ratio,
-                                    score_cutoff=80
+                        # Если не нашли район, пробуем улицу
+                        if not district_found:
+                            try:
+                                api_result_street = self.post_json(
+                                    CIAN_GEOCODE_FOR_SEARCH,
+                                    {"lat": lat, "lng": lon, "kind": "street"}
                                 )
                                 
-                                if match:
-                                    district_name = match[0]
-                                    district_id = moscow_district_name_to_cian_id[district_name]
-                            
-                            if district_id:
-                                log.info(f"Определен район Москвы: {district_name} (ID: {district_id})")
-                                result = f"district[0]={district_id}"
-                                
-                                # Сохраняем в кэш
-                                self._address_filter_cache[address] = result
-                                return result
-                            else:
-                                log.warning(f"Район '{district_name}' не найден в справочнике")
-                        else:
-                            log.info("Район не найден в структуре ответа API")
-                            
-                except (KeyError, IndexError, Exception) as e:
-                    log.warning(f"Ошибка при определении района: {e}")
+                                if api_result_street and "details" in api_result_street and api_result_street["details"]:
+                                    details = api_result_street["details"]
+                                    
+                                    # Ищем улицу с конца списка (наиболее конкретный элемент)
+                                    for i in range(len(details)-1, -1, -1):
+                                        if "id" in details[i] and "fullName" in details[i]:
+                                            name_lower = details[i]["fullName"].lower()
+                                            
+                                            # Проверяем, что это улица или похожий объект
+                                            street_markers = ["улица", "переулок", "проспект", "проезд", 
+                                                            "шоссе", "бульвар", "площадь", "набережная"]
+                                                            
+                                            if any(marker in name_lower for marker in street_markers):
+                                                street_id = details[i]["id"]
+                                                street_name = details[i]["fullName"]
+                                                log.info(f"Определена улица в Москве: {street_name} (ID: {street_id})")
+                                                result = f"street[0]={street_id}"
+                                                self._address_filter_cache[address] = result
+                                                return result
+                                    
+                                    # Если не нашли явную улицу, берем последний элемент
+                                    if len(details) > 0 and "id" in details[-1]:
+                                        street_id = details[-1]["id"]
+                                        street_name = details[-1].get("fullName", "Неизвестно")
+                                        log.info(f"Используем как улицу в Москве: {street_name} (ID: {street_id})")
+                                        result = f"street[0]={street_id}"
+                                        self._address_filter_cache[address] = result
+                                        return result
+                            except Exception as e:
+                                log.warning(f"Ошибка при определении улицы в Москве: {e}")
                     
-                # 6.2 План Б: Ищем упоминание любого района в адресе (нечеткий поиск)
-                address_parts = re.split(r'[,;.]', address_lower)
-                for part in address_parts:
-                    # Для каждой части адреса проверяем наличие района
-                    for district_name, district_id in moscow_district_name_to_cian_id.items():
-                        district_lower = district_name.lower()
-                        if district_lower in part:
-                            log.info(f"Найден район в части адреса: {district_name}")
-                            result = f"district[0]={district_id}"
-                            
-                            # Сохраняем в кэш
-                            self._address_filter_cache[address] = result
-                            return result
+                except Exception as e:
+                    log.warning(f"Ошибка при определении района в Москве: {e}")
                 
-                # 6.3 План В: Используем интеллектуальный нечеткий поиск
-                # Находим наиболее вероятные части адреса, которые могут содержать район
-                potential_district_parts = []
-                for part in address_parts:
-                    clean_part = part.strip()
-                    if len(clean_part) > 3 and not any(x in clean_part for x in ["область", "москва", "город", "улица", "ул.", "дом", "корп"]):
-                        potential_district_parts.append(clean_part)
+                # Если ничего не нашли - используем весь регион Москва
+                result = "region=1"
+                self._address_filter_cache[address] = result
+                return result
                 
-                # Оцениваем каждую часть на соответствие любому району
-                best_match = None
-                best_score = 0
-                best_district_id = None
-                
-                for part in potential_district_parts:
-                    match = process.extractOne(
-                        part, 
-                        moscow_district_name_to_cian_id.keys(),
-                        scorer=fuzz.token_sort_ratio
-                    )
-                    
-                    if match and match[1] > best_score and match[1] > 70:  # минимальный порог схожести - 70%
-                        best_match = match[0]
-                        best_score = match[1]
-                        best_district_id = moscow_district_name_to_cian_id[match[0]]
-                
-                if best_match:
-                    log.info(f"Нечеткое соответствие района: {best_match} (схожесть: {best_score}%)")
-                    result = f"district[0]={best_district_id}"
-                    
-                    # Сохраняем в кэш
-                    self._address_filter_cache[address] = result
-                    return result
-                
-                # 6.4 План Г: Если район не определили - пробуем улицу
-                try:
-                    for_search_result = self.post_json(
-                        CIAN_GEOCODE_FOR_SEARCH,
-                        {"lat": lat, "lng": lon, "kind": "street"}
-                    )
-                    
-                    if "details" in for_search_result and for_search_result["details"]:
-                        # Ищем наиболее конкретную улицу
-                        street_data = None
-                        details = for_search_result["details"]
-                        
-                        # Перебираем с конца, так как наиболее конкретные данные обычно в конце
-                        for i in range(len(details)-1, -1, -1):
-                            if "id" in details[i] and "fullName" in details[i]:
-                                name = details[i]["fullName"].lower()
-                                # Проверяем, что это действительно улица, а не район или город
-                                if any(marker in name for marker in ["улица", "переулок", "проспект", "проезд", "шоссе", "бульвар"]):
-                                    street_data = details[i]
-                                    break
-                        
-                        if not street_data and details:
-                            # Если не нашли явную улицу, берем последний элемент
-                            street_data = details[-1]
-                        
-                        if street_data:
-                            street_id = street_data['id']
-                            street_name = street_data.get('fullName', 'Неизвестно')
-                            log.info(f"Определена улица: {street_name} (ID: {street_id})")
-                            result = f"street[0]={street_id}"
-                            
-                            # Сохраняем в кэш
-                            self._address_filter_cache[address] = result
-                            return result
-                    else:
-                        log.warning("Структура ответа для улицы некорректна")
-                except (KeyError, IndexError, Exception) as e:
-                    log.warning(f"Ошибка при определении улицы: {e}")
-            
         except Exception as e:
             log.exception(f"❌ Общая ошибка при определении фильтра для адреса {address}: {e}")
         
         # Если все методы не сработали, используем общий фильтр по региону
-        final_region = default_result or ("region=4593" if is_likely_mo else "region=1")
-        log.warning(f"⚠️ Не удалось определить точное местоположение для: {address}, используем {final_region}")
+        final_region = default_result or "region=1"  # Москва по умолчанию
+        log.warning(f"⚠️ Не удалось определить местоположение для: {address}, используем {final_region}")
         
-        # Сохраняем даже дефолтное значение в кэш, чтобы не повторять ошибку
+        # Сохраняем в кэш
         self._address_filter_cache[address] = final_region
-        
         return final_region
 
     def extract_offer_data(self, offer_page, offer_url, lot_uuid, offer_type):

@@ -821,13 +821,13 @@ async def main():
             else:
                 # Не удалось восстановить, начинаем с нуля
                 logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
-                lots = await fetch_lots(max_pages=5)
+                lots = await fetch_lots(max_pages=3)
                 processed_indices = set()
                 start_idx = 0
         else:
             # Начинаем с нуля
             logging.info("🔄 Запускаем обработку с нуля (без восстановления)")
-            lots = await fetch_lots(max_pages=5)
+            lots = await fetch_lots(max_pages=3)
             processed_indices = set()
             start_idx = 0
         
@@ -932,7 +932,7 @@ async def main():
                 
                 # ВАЖНО: Рассчитываем метрики на основе ВСЕХ объявлений
                 # а не только отфильтрованных
-                calculate_lot_metrics(lot, sale_offers, rent_offers)
+                calculate_lot_metrics(lot, filtered_sale_offers, filtered_rent_offers)
                 
                 # Добавляем классификацию объекта через GPT
                 if CONFIG.get("gpt_analysis_enabled", False):
