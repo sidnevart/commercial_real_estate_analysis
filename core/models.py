@@ -64,6 +64,13 @@ class Lot:
     sale_data: List[float] = field(default_factory=list)
     rent_data: List[float] = field(default_factory=list)
 
+    filtered_sale_offers_count: int = 0
+    filtered_rent_offers_count: int = 0
+    plus_rental: int = 0
+    plus_sale: int = 0
+    plus_count: int = 0
+    status: str = "unknown"
+
 @dataclass(slots=True)
 class Offer:
     id: str

@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------
 # 2GIS credentials & endpoints
 # ----------------------------------------------------------------------------
-DGIS_API_KEY: str = "ecec3762-6189-4cdf-90e6-81d6876ab306"  # TODO: move to .env in prod
+DGIS_API_KEY: str = "09b2ea30-9713-4930-b7fe-2213afc9289a"  # TODO: move to .env in prod
 GEOCODER_URL = "https://catalog.api.2gis.com/3.0/items/geocode"
 ROUTING_URL = "https://routing.api.2gis.com/routing/7.0.0/global"
 

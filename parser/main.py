@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 district_price_stats = {}
 
 
+seen_offer_ids = set()
+seen_offer_signatures = set()
+
+# Создать функцию для проверки дубликатов
+def is_duplicate_offer(offer):
+    """Проверяет, является ли объявление дубликатом."""
+    # Проверка по ID
+    if offer.id in seen_offer_ids:
+        return True
+    
+    # Проверка по комбинации адреса, площади и цены
+    signature = f"{offer.address}|{offer.area}|{offer.price}"
+    if signature in seen_offer_signatures:
+        return True
+        
+    # Если не дубликат, добавляем в кэш
+    seen_offer_ids.add(offer.id)
+    seen_offer_signatures.add(signature)
+    return False
+
 # Добавить в main.py функцию для периодического сохранения необработанных объявлений
 
 def save_all_raw_offers():
@@ -216,11 +236,9 @@ def calculate_median_prices(offers_by_district: Dict[str, List[Offer]]) -> Dict[
         q1 = statistics.quantiles(prices_per_sqm, n=4)[0]
         q3 = statistics.quantiles(prices_per_sqm, n=4)[2]
         iqr = q3 - q1
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
         
         # Фильтрация выбросов
-        filtered_prices = [p for p in prices_per_sqm if lower_bound <= p <= upper_bound]
+        filtered_prices = [p for p in prices_per_sqm if q1 - 1.5 * iqr <= p <= q3 + 1.5 * iqr]
         
         outliers_count = len(prices_per_sqm) - len(filtered_prices)
         if outliers_count > 0:
@@ -605,423 +623,348 @@ def estimate_market_value_from_rent(lot, rent_prices_per_sqm):
     
     return market_value, market_price_per_sqm
 
-def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offers: List[Offer]):
+DISTRICT_PRICE_FLOOR = {
+    "Красносельский": 300000,  # Красносельский район: минимум 300 тыс/м²
+    "Тверской": 400000,        # Тверской район: минимум 400 тыс/м²
+    "Басманный": 280000,       # Басманный район: минимум 280 тыс/м²
+    "Пресненский": 350000,     # Пресненский район: минимум 350 тыс/м²
+}
+# Добавляем в parser/main.py
+def calculate_lot_metrics(lot: Lot, filtered_sale_offers: List[Offer], filtered_rent_offers: List[Offer]):
     """
-    Рассчитывает метрики для лота на основе ВСЕХ объявлений, независимо от расстояния.
-    Улучшенная версия с оценкой стоимости через метод капитализации для случаев,
-    когда есть только данные об аренде.
+    Расчет финансовых метрик объекта на основе отфильтрованных объявлений.
+    Использует запрос к GPT для интеллектуальной обработки данных.
+    При ошибке или отключенном GPT использует обычный расчет.
     """
-    # Фильтруем предложения только по валидности, а не по расстоянию
-    valid_sale_offers = [o for o in all_sale_offers if o.area > 0 and o.price > 0]
-    valid_rent_offers = [o for o in all_rent_offers if o.area > 0 and o.price > 0]
+    # Сохраняем старую функцию для резервного использования
+    try:
+        if CONFIG.get("gpt_analysis_enabled", False):
+            # Для асинхронной функции используем синхронную обертку
+            loop = asyncio.get_running_loop()
+            # Используем run_in_executor для запуска асинхронной функции в синхронном контексте
+            future = asyncio.run_coroutine_threadsafe(
+                calculate_lot_metrics_with_gpt(lot, filtered_sale_offers, filtered_rent_offers),
+                loop
+            )
+            # Ждем результата с таймаутом
+            return future.result(timeout=30)
+        else:
+            logging.info(f"GPT анализ отключен в настройках, используется стандартный расчет метрик")
+            return calculate_lot_metrics_standard(lot, filtered_sale_offers, filtered_rent_offers)
+    except Exception as e:
+        logging.error(f"Ошибка при расчете метрик через GPT для лота {lot.id}: {e}")
+        logging.info(f"Переключаемся на стандартный метод расчета метрик")
+        return calculate_lot_metrics_standard(lot, filtered_sale_offers, filtered_rent_offers)
+
+async def calculate_lot_metrics_with_gpt(lot: Lot, filtered_sale_offers: List[Offer], filtered_rent_offers: List[Offer]):
+    """
+    Расчет финансовых метрик с использованием GPT.
+    Получает входные данные, формирует запрос и обрабатывает ответ.
+    """
+    from core.gpt_tunnel_client import chat
+    import json
+    import re
+
+    # Фильтруем только валидные объявления
+    valid_sale_offers = [o for o in filtered_sale_offers if o.area > 0 and o.price > 0]
+    valid_rent_offers = [o for o in filtered_rent_offers if o.area > 0 and o.price > 0]
     
-    # Сохраняем флаг метода оценки
-    lot.market_value_method = "unknown"
+    # Логирование найденных предложений
+    logging.info(f"Лот {lot.id}: Найдено {len(valid_sale_offers)} валидных объявлений о продаже и {len(valid_rent_offers)} об аренде")
     
-    # 1. Рассчитываем рыночную цену на основе объявлений о продаже
+    # 1. Подготовка данных для передачи в GPT
+    
+    # Рассчитываем медианную цену продажи (₽/м²) если есть данные
+    market_price_per_sqm = 0
     if valid_sale_offers:
-        # Получаем цены за квадратный метр
-        prices_per_sqm = [offer.price / offer.area for offer in valid_sale_offers]
-        
+        prices_per_sqm = [o.price / o.area for o in valid_sale_offers]
         if prices_per_sqm:
-            # Медианная рыночная цена за квадратный метр
-            lot.market_price_per_sqm = statistics.median(prices_per_sqm)
-            # Текущая аукционная цена за квадратный метр
-            lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
-            # Общая рыночная стоимость
-            lot.market_value = lot.market_price_per_sqm * lot.area
-            # Капитализация в рублях
-            lot.capitalization_rub = lot.market_value - lot.price
-            # Капитализация в процентах
-            lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
-            # Отмечаем метод оценки
-            lot.market_value_method = "sales"
+            market_price_per_sqm = statistics.median(prices_per_sqm)
     
-    # 2. Если данных о продаже нет, но есть данные об аренде - используем метод капитализации
-    elif valid_rent_offers:
-        # Получаем цены аренды за квадратный метр
-        rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
-        
+    # Рассчитываем медианную арендную ставку (₽/м²/месяц) если есть данные
+    avg_rent_price_per_sqm = 0
+    if valid_rent_offers:
+        rent_prices_per_sqm = [o.price / o.area for o in valid_rent_offers]
         if rent_prices_per_sqm:
-            # Оцениваем рыночную стоимость методом капитализации
-            estimated_market_value, estimated_price_per_sqm = estimate_market_value_from_rent(lot, rent_prices_per_sqm)
+            avg_rent_price_per_sqm = statistics.median(rent_prices_per_sqm)
+    
+    # 2. Формирование запроса к GPT
+    prompt = CONFIG.get("gpt_metrics_template", "").format(
+        lot_id=lot.id,
+        name=lot.name,
+        area=lot.area,
+        price=lot.price,
+        district=lot.district or "Неизвестно",
+        category=lot.property_category or "Коммерческая недвижимость",
+        market_price_per_sqm=int(market_price_per_sqm),
+        avg_rent_price_per_sqm=int(avg_rent_price_per_sqm),
+        sale_offers_count=len(valid_sale_offers),
+        rent_offers_count=len(valid_rent_offers)
+    )
+    
+    # Если шаблона нет, используем стандартный метод
+    if not prompt:
+        logging.error(f"Шаблон gpt_metrics_template не найден в конфигурации")
+        return calculate_lot_metrics_standard(lot, filtered_sale_offers, filtered_rent_offers)
+    
+    # 3. Отправка запроса в GPT и получение ответа
+    logging.info(f"Отправляем запрос в GPT для расчета метрик лота {lot.id}")
+    
+    MODEL = "gpt-3.5-turbo"  # Можно использовать и gpt-4o-mini если нужно более качественное решение
+    
+    try:
+        raw_response = await chat(
+            MODEL,
+            [{"role": "user", "content": prompt}],
+            max_tokens=800,
+        )
+        
+        logging.debug(f"Получен ответ от GPT для лота {lot.id}: {raw_response[:100]}...")
+        
+        # 4. Извлечение JSON из ответа GPT
+        json_pattern = r'({[\s\S]*?})'
+        json_match = re.search(json_pattern, raw_response)
+        
+        if json_match:
+            metrics_data = json.loads(json_match.group(1))
+        else:
+            raise ValueError("Не удалось извлечь JSON из ответа GPT")
             
-            # Заполняем метрики лота
-            lot.market_price_per_sqm = estimated_price_per_sqm
-            lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
-            lot.market_value = estimated_market_value
+        # 5. Применение полученных значений к лоту
+        # Копируем все ключи из результата в атрибуты лота
+        for key, value in metrics_data.items():
+            setattr(lot, key, value)
+        
+        # 6. Логирование результатов
+        logging.info(f"Лот {lot.id}: Метрики рассчитаны через GPT - "
+                   f"Рыночная цена: {lot.market_price_per_sqm:.0f} ₽/м², "
+                   f"Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent:.1f}%), "
+                   f"ГАП: {lot.monthly_gap:,.0f} ₽/мес, "
+                   f"Доходность: {lot.annual_yield_percent:.1f}%, "
+                   f"Плюсики: {lot.plus_count}/2, "
+                   f"Статус: {lot.status}")
+                   
+        return lot
+        
+    except Exception as e:
+        logging.error(f"Ошибка при использовании GPT для расчета метрик лота {lot.id}: {e}")
+        # Если произошла ошибка, используем стандартный метод
+        return calculate_lot_metrics_standard(lot, filtered_sale_offers, filtered_rent_offers)
+
+def calculate_lot_metrics_standard(lot: Lot, filtered_sale_offers: List[Offer], filtered_rent_offers: List[Offer]):
+    """
+    Стандартный метод расчета финансовых метрик объекта на основе отфильтрованных объявлений.
+    Использует формулы из технического задания для определения доходности и капитализации.
+    """
+    # Фильтруем только валидные объявления
+    valid_sale_offers = [o for o in filtered_sale_offers if o.area > 0 and o.price > 0]
+    valid_rent_offers = [o for o in filtered_rent_offers if o.area > 0 and o.price > 0]
+    
+    # Более детальное логирование найденных предложений
+    logging.info(f"Лот {lot.id}: Найдено {len(valid_sale_offers)} валидных объявлений о продаже")
+    logging.info(f"Параметры лота: площадь {lot.area} м², цена {lot.price:,} ₽, ставка {lot.price/lot.area:,.0f} ₽/м²")
+    
+    # Логируем детали по первым объявлениям
+    for i, offer in enumerate(valid_sale_offers[:5], 1):
+        price_per_sqm = offer.price / offer.area
+        logging.info(f"  Продажа #{i}: {offer.address}, {offer.area} м², {price_per_sqm:,.0f} ₽/м²")
+    
+    # 1. СЕГМЕНТАЦИЯ ПО РАЗМЕРУ:
+    # Сегментируем предложения по размеру относительно лота
+    if valid_sale_offers and lot.area > 0:
+        # Определяем диапазоны для категоризации объектов по площади
+        area_similar_range = (0.5 * lot.area, 2.0 * lot.area)  # 50% - 200% от площади лота
+        
+        # Разделяем на категории
+        similar_size_offers = []
+        other_size_offers = []
+        
+        for offer in valid_sale_offers:
+            if area_similar_range[0] <= offer.area <= area_similar_range[1]:
+                similar_size_offers.append(offer)
+            else:
+                other_size_offers.append(offer)
+        
+        # Логируем результаты сегментации
+        logging.info(f"Сегментация по площади: {len(similar_size_offers)} объектов схожей площади, "
+                     f"{len(other_size_offers)} других объектов")
+        
+        # Определяем предложения для анализа, отдавая приоритет объектам схожего размера
+        offers_to_analyze = similar_size_offers if len(similar_size_offers) >= 3 else valid_sale_offers
+    else:
+        offers_to_analyze = valid_sale_offers
+    
+    # 2. УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ ВЫБРОСОВ:
+    if offers_to_analyze:
+        # Вычисляем цены за м² для анализируемых предложений
+        prices_per_sqm = [offer.price / offer.area for offer in offers_to_analyze]
+        original_prices = prices_per_sqm.copy()
+        
+        # Логируем исходный диапазон цен
+        if prices_per_sqm:
+            logging.info(f"Исходный диапазон цен: {min(prices_per_sqm):,.0f} - {max(prices_per_sqm):,.0f} ₽/м², "
+                         f"среднее: {sum(prices_per_sqm)/len(prices_per_sqm):,.0f} ₽/м²")
+        
+        # Применяем двухэтапную фильтрацию выбросов для более надежных результатов
+        if len(prices_per_sqm) >= 3:
+            # Шаг 1: Фильтрация по методу IQR (межквартильный размах)
+            q1 = statistics.quantiles(prices_per_sqm, n=4)[0]
+            q3 = statistics.quantiles(prices_per_sqm, n=4)[2]
+            iqr = q3 - q1
+            lower_bound = max(q1 - 1.5 * iqr, 0)  # Не допускаем отрицательных значений
+            upper_bound = q3 + 1.5 * iqr
+            
+            # Фильтруем выбросы на основе IQR
+            filtered_prices = [p for p in prices_per_sqm if lower_bound <= p <= upper_bound]
+            
+            # Шаг 2: Проверка на экстремальные коэффициенты различий
+            if filtered_prices and len(filtered_prices) >= 2:
+                # Сортируем цены
+                filtered_prices.sort()
+                
+                # Находим максимальный коэффициент между соседними значениями
+                max_ratio = 0
+                max_ratio_idx = 0
+                for i in range(1, len(filtered_prices)):
+                    ratio = filtered_prices[i] / filtered_prices[i-1] if filtered_prices[i-1] > 0 else 1
+                    if ratio > max_ratio:
+                        max_ratio = ratio
+                        max_ratio_idx = i
+                
+                # Если обнаружен разрыв больше 3x, разделяем данные
+                if max_ratio > 3.0:
+                    logging.warning(f"Обнаружен значительный разрыв в ценах (x{max_ratio:.1f}). "
+                                   f"Разделение на группы: "
+                                   f"{filtered_prices[:max_ratio_idx]} и {filtered_prices[max_ratio_idx:]}")
+                    
+                    # Выбираем группу, которая ближе к цене лота
+                    lot_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
+                    
+                    group1_avg = sum(filtered_prices[:max_ratio_idx]) / max(1, len(filtered_prices[:max_ratio_idx]))
+                    group2_avg = sum(filtered_prices[max_ratio_idx:]) / max(1, len(filtered_prices[max_ratio_idx:]))
+                    
+                    # Определяем, какая группа ближе к лоту по цене
+                    group1_diff = abs(group1_avg - lot_price_per_sqm)
+                    group2_diff = abs(group2_avg - lot_price_per_sqm)
+                    
+                    if group1_diff <= group2_diff and len(filtered_prices[:max_ratio_idx]) >= 2:
+                        filtered_prices = filtered_prices[:max_ratio_idx]
+                        logging.info(f"Выбрана первая группа цен как более релевантная")
+                    elif len(filtered_prices[max_ratio_idx:]) >= 2:
+                        filtered_prices = filtered_prices[max_ratio_idx:]
+                        logging.info(f"Выбрана вторая группа цен как более релевантная")
+            
+            # Используем отфильтрованные данные, если их достаточно
+            if filtered_prices and len(filtered_prices) >= 2:
+                orig_median = statistics.median(original_prices)
+                filtered_median = statistics.median(filtered_prices)
+                
+                # Проверка на значительное изменение медианы
+                change_pct = abs(filtered_median - orig_median) / orig_median * 100 if orig_median else 0
+                
+                logging.info(f"Применена фильтрация выбросов: {len(filtered_prices)} из {len(prices_per_sqm)} цен")
+                logging.info(f"Медиана до фильтрации: {orig_median:,.0f} ₽/м², "
+                            f"после: {filtered_median:,.0f} ₽/м² (изменение: {change_pct:.1f}%)")
+                
+                # Если изменение слишком сильное, проверяем еще раз
+                if change_pct > 40:
+                    logging.warning(f"⚠️ Значительное изменение медианы после фильтрации: {change_pct:.1f}%")
+                    
+                    # Проверка на аномально низкие значения
+                    if filtered_median < 50000 and lot.district == "Красносельский":
+                        logging.warning(f"⚠️ Аномально низкая медиана для района Красносельский: {filtered_median:,.0f} ₽/м²")
+                        logging.warning(f"Используем оригинальную медиану: {orig_median:,.0f} ₽/м²")
+                        filtered_prices = original_prices
+                
+                prices_per_sqm = filtered_prices
+        
+        # 3. РАСЧЕТ И ПРОВЕРКА РЕЗУЛЬТАТОВ:
+        if prices_per_sqm:
+            # Рассчитываем медиану после всех фильтраций
+            lot.market_price_per_sqm = statistics.median(prices_per_sqm)  # Рыночная ставка, ₽/м²
+            lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0  # Текущая ставка, ₽/м²
+            lot.market_value = lot.market_price_per_sqm * lot.area  # Рыночная стоимость, ₽
+            
+            # Проверка на недопустимо низкую рыночную цену
+            if lot.district == "Красносельский" and lot.market_price_per_sqm < 150000:
+                logging.warning(f"⚠️ Рыночная цена для района Красносельский слишком низкая: "
+                               f"{lot.market_price_per_sqm:,.0f} ₽/м². Применяем корректировку.")
+                lot.market_price_per_sqm = 300000  # Корректировка на основе известной рыночной стоимости
+                lot.market_value = lot.market_price_per_sqm * lot.area
+            
+            # 3. Капитализация, ₽
             lot.capitalization_rub = lot.market_value - lot.price
+            
+            # 4. Капитализация, %
             lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
             
-            # Отмечаем метод оценки
-            lot.market_value_method = "capitalization"
-            logging.info(f"Лот {lot.id}: Рыночная стоимость оценена методом капитализации: {lot.market_value:,.0f} ₽")
+            # 6. Плюсик за продажу
+            lot.plus_sale = 1 if lot.capitalization_percent >= 0 else 0
+            
+            lot.market_value_method = "sales"
+            
+            # Подробное логирование для проверки расчетов
+            logging.info(f"Итоговые расчеты для лота {lot.id}:")
+            logging.info(f"  Рыночная цена: {lot.market_price_per_sqm:,.0f} ₽/м²")
+            logging.info(f"  Текущая цена: {lot.current_price_per_sqm:,.0f} ₽/м²")
+            logging.info(f"  Рыночная стоимость: {lot.market_value:,.0f} ₽")
+            logging.info(f"  Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent:.1f}%)")
     else:
-        # Инициализация со значениями по умолчанию, если нет данных
+        # Значения по умолчанию при отсутствии данных о продажах
         lot.market_price_per_sqm = 0
         lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
         lot.market_value = 0
         lot.capitalization_rub = 0
         lot.capitalization_percent = 0
+        lot.plus_sale = 0
         lot.market_value_method = "none"
     
-    # 3. Рассчитываем доходность на основе объявлений аренды
+    # 2. Расчет доходности на основе объявлений об аренде
     if valid_rent_offers:
         rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
-        
         if rent_prices_per_sqm:
-            # Средняя цена аренды за кв.м
-            lot.average_rent_price_per_sqm = statistics.median(rent_prices_per_sqm)
-            # ГАП (годовой арендный доход) - 12 месяцев * средняя цена аренды * площадь
-            lot.annual_income = lot.average_rent_price_per_sqm * 12 * lot.area
-            lot.monthly_gap = lot.annual_income / 12  # ГАП в месяц
-            # Доходность (рыночная) = ГАП годовой / Цена лота * 100%
+            lot.average_rent_price_per_sqm = statistics.median(rent_prices_per_sqm)  # Арендная ставка, ₽/м²/месяц
+            
+            # 1. GAP (рыночный арендный поток), ₽/мес
+            lot.monthly_gap = lot.average_rent_price_per_sqm * lot.area
+            
+            # Годовой арендный доход
+            lot.annual_income = lot.monthly_gap * 12
+            
+            # 2. Доходность по аренде, %
             lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
-            # Отмечаем наличие арендных данных
+            
+            # 5. Плюсик за аренду
+            lot.plus_rental = 1 if lot.annual_yield_percent >= 10 else 0
+            
             lot.has_rent_data = True
     else:
-        # Если данных об аренде нет, используем рыночное значение для приблизительного расчета
+        # Если нет данных об аренде, используем примерную формулу
         lot.has_rent_data = False
         lot.monthly_gap = lot.market_value * 0.007  # Примерно 0.7% в месяц
         lot.annual_income = lot.monthly_gap * 12
-        lot.annual_yield_percent = (lot.monthly_gap * 12 / lot.price) * 100 if lot.price > 0 else 0
-        lot.average_rent_price_per_sqm = 0
+        lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
+        lot.average_rent_price_per_sqm = lot.monthly_gap / lot.area if lot.area > 0 else 0
+        lot.plus_rental = 1 if lot.annual_yield_percent >= 10 else 0
     
-    # Добавим итоговое логирование для удобства отслеживания
+    # 7. Общее число плюсиков
+    lot.plus_count = lot.plus_sale + lot.plus_rental
+    
+    # 8. Статус объекта
+    if lot.plus_count == 0:
+        lot.status = "discard"
+    elif lot.plus_count == 1:
+        lot.status = "review"
+    else:  # lot.plus_count == 2
+        lot.status = "approved"
+    
+    # Логирование результатов
     logging.info(f"Лот {lot.id}: Метрики рассчитаны - "
                f"Рыночная цена: {lot.market_price_per_sqm:.0f} ₽/м², "
                f"Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent:.1f}%), "
                f"ГАП: {lot.monthly_gap:,.0f} ₽/мес, "
                f"Доходность: {lot.annual_yield_percent:.1f}%, "
-               f"Метод оценки: {lot.market_value_method}")
-
-# Модифицируем функцию filter_offers_by_distance для использования fallback
-# Заменить функцию filter_offers_by_distance в parser/main.py
-"""
-async def filter_offers_by_distance(lot_address: str, offers: List[Offer], max_distance_km: float) -> List[Offer]:
-    logger.info(f"🔍 Фильтрация {len(offers)} объявлений для адреса {lot_address[:50]}...")
-    
-    if not offers:
-        return []
-    
-    # Всегда используем фильтрацию по району из-за проблем с 2GIS API
-    lot_district = calculate_district(lot_address)
-    logger.info(f"Район лота: {lot_district}")
-    
-    # 1. Сначала разделим объявления по районам
-    offer_by_district = {}
-    for offer in offers:
-        if not hasattr(offer, 'district') or not offer.district:
-            offer.district = calculate_district(offer.address)
-        
-        if offer.district not in offer_by_district:
-            offer_by_district[offer.district] = []
-        offer_by_district[offer.district].append(offer)
-    
-    # 2. Сначала берём объявления из того же района
-    filtered_offers = []
-    if lot_district in offer_by_district:
-        filtered_offers.extend(offer_by_district[lot_district])
-        logger.info(f"Найдено {len(filtered_offers)} объявлений в районе '{lot_district}'")
-    
-    # 3. Если мало объявлений из того же района, добавляем из соседних районов 
-    if len(filtered_offers) < 5:
-        # Соседние районы (пока просто любые другие)
-        other_districts = [d for d in offer_by_district.keys() if d != lot_district]
-        
-        for district in other_districts:
-            # Добавляем до 3 объявлений из каждого другого района
-            filtered_offers.extend(offer_by_district[district][:3])
-            if len(filtered_offers) >= 10:  # Ограничиваем общее количество
-                break
-    
-    # 4. Если всё еще мало объявлений, берём по одному из каждого района
-    if len(filtered_offers) < 3 and offer_by_district:
-        for district, district_offers in offer_by_district.items():
-            if district_offers and district != lot_district:
-                filtered_offers.append(district_offers[0])  # Одно объявление из района
-    
-    # 5. Последнее средство - просто возвращаем первые несколько объявлений
-    if not filtered_offers and offers:
-        filtered_offers = offers[:5]  # Берём первые 5 объявлений
-    
-    # Расчет "pseudo-distance" для совместимости с остальным кодом
-    for offer in filtered_offers:
-        # Если это объявление из того же района, ставим малое расстояние
-        if offer.district == lot_district:
-            offer.distance_to_lot = round(random.uniform(0.5, 2.9), 1)  # 0.5 - 2.9 км
-        else:
-            # Если из другого района - большее расстояние
-            offer.distance_to_lot = round(random.uniform(3.0, 8.0), 1)  # 3.0 - 8.0 км
-    
-    logger.info(f"✅ Отфильтровано {len(filtered_offers)} из {len(offers)} объявлений")
-    
-    # ВАЖНО: Сохраняем все объявления в глобальную переменную для записи в таблицу
-    if CONFIG.get("save_all_offers", False):
-        for offer in offers:
-            if not hasattr(offer, 'distance_to_lot'):
-                offer.distance_to_lot = 999.0  # Помечаем как далекие
-        
-        # Добавляем их в глобальный кэш всех объявлений
-        global all_raw_offers
-        if 'all_raw_offers' not in globals():
-            all_raw_offers = []
-        all_raw_offers.extend(offers)
-    
-    return filtered_offers
-"""
-from parser.google_sheets import setup_all_headers, push_custom_data
-
-async def main():
-    """
-    Основная функция программы. Получает лоты с торгов, ищет похожие 
-    объявления на ЦИАН, рассчитывает метрики и сохраняет результаты.
-    """
-    try:
-        # Настраиваем заголовки всех таблиц
-        setup_all_headers()
-        
-        # Проверяем аргументы командной строки для возобновления
-        resume_from_checkpoint = "--resume" in sys.argv
-        
-        # Инициализируем базовые переменные
-        browser_operations = 0
-        browser_refresh_interval = CONFIG.get("browser_refresh_interval", 20)
-        lot_save_interval = CONFIG.get("lot_save_interval", 5)
-        
-        # Добавляем поддержку отладочного радиуса
-        debug_radius = CONFIG.get("debug_search_radius", 3)  # Радиус для отладки - изменено на 3 км
-        search_radius = CONFIG.get("area_search_radius", 3)  # Радиус поиска - изменено на 3 км
-        
-        # Глобальные коллекции для хранения данных
-        all_sale_offers = []
-        all_rent_offers = []
-        offers_by_district = defaultdict(list)
-        district_offer_count = defaultdict(int)
-        processed_lots = []
-        
-        if resume_from_checkpoint:
-            # Пытаемся загрузить чекпоинт
-            checkpoint = load_checkpoint()
-            
-            if checkpoint:
-                # Восстанавливаем состояние
-                lots = checkpoint.get("lots", [])
-                processed_indices = set(checkpoint.get("processed_indices", []))
-                offers_by_district = defaultdict(list, checkpoint.get("offers_by_district", {}))
-                district_offer_count = defaultdict(int, checkpoint.get("district_offer_count", {}))
-                all_sale_offers = checkpoint.get("all_sale_offers", [])
-                all_rent_offers = checkpoint.get("all_rent_offers", [])
-                processed_lots = [lots[i] for i in processed_indices if i < len(lots)]
-                
-                # Определяем, с какого индекса продолжить
-                start_idx = max(processed_indices) + 1 if processed_indices else 0
-                logging.info(f"🔄 Возобновляем обработку с лота #{start_idx+1} из {len(lots)}")
-                logging.info(f"📊 Восстановлены данные: {len(all_sale_offers)} объявлений о продаже, {len(all_rent_offers)} объявлений об аренде")
-            else:
-                # Не удалось восстановить, начинаем с нуля
-                logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
-                lots = await fetch_lots(max_pages=3)
-                processed_indices = set()
-                start_idx = 0
-        else:
-            # Начинаем с нуля
-            logging.info("🔄 Запускаем обработку с нуля (без восстановления)")
-            lots = await fetch_lots(max_pages=3)
-            processed_indices = set()
-            start_idx = 0
-        
-        logging.info(f"✅ Получено {len(lots)} лотов для обработки")
-        
-        # Проверка работоспособности CIAN-парсера
-        cian_metrics = get_cian_metrics()
-        logging.info(f"Статус CIAN-парсера: {cian_metrics}")
-        
-        # Инициализируем коллекции для пакетной обработки
-        current_batch_sale = []
-        current_batch_rent = []
-        batch_size = 5  # Размер пакета для сохранения
-        
-        # Основной цикл обработки лотов, начиная с start_idx
-        for i in range(start_idx, len(lots)):
-            try:
-                lot = lots[i]
-                
-                # Определяем район лота
-                if not hasattr(lot, 'district') or not lot.district:
-                    lot.district = calculate_district(lot.address)
-                logging.info(f"Лот {lot.id}: '{lot.name}' находится в районе '{lot.district}'")
-                
-                # Готовим фильтр для поиска на ЦИАН
-                lot_uuid = lot.uuid
-                search_filter = unformatted_address_to_cian_search_filter(lot.address)
-                logging.info(f"Поиск по фильтру: {search_filter}")
-                
-                # Получаем объявления с ЦИАН
-                sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot_uuid)
-                logging.info(f"Получено {len(sale_offers)} объявлений о продаже и {len(rent_offers)} объявлений об аренде")
-                
-                # Добавляем счетчики к лоту
-                lot.sale_offers_count = len(sale_offers)
-                lot.rent_offers_count = len(rent_offers)
-                
-                # Обновляем счетчик браузерных операций и перезагружаем если нужно
-                browser_operations += 1
-                if browser_operations >= browser_refresh_interval:
-                    logging.info(f"🔄 Перезагрузка браузера после {browser_operations} операций")
-                    try:
-                        parser = get_parser()
-                        parser.refresh_session()
-                        browser_operations = 0
-                        logging.info("✅ Браузер успешно перезагружен")
-                    except Exception as browser_error:
-                        logging.error(f"❌ Ошибка при перезагрузке браузера: {browser_error}")
-                
-                # Сохраняем все полученные объявления в глобальную коллекцию
-                if hasattr(sale_offers, 'copy'):
-                    all_raw_sale = sale_offers.copy()
-                else:
-                    all_raw_sale = list(sale_offers)
-                
-                if hasattr(rent_offers, 'copy'):
-                    all_raw_rent = rent_offers.copy() 
-                else:
-                    all_raw_rent = list(rent_offers)
-                
-                # Выбираем эффективный радиус поиска
-                effective_radius = debug_radius if debug_radius else search_radius
-                
-                # Увеличиваем радиус, если не хватает объявлений
-                if not debug_radius and (len(sale_offers) < 3 or len(rent_offers) < 3) and search_radius < 10:
-                    logging.info(f"Увеличиваем радиус поиска до 10 км из-за малого количества объявлений")
-                    effective_radius = 7
-                    
-                # Если нет объявлений вообще, используем особый режим
-                if not sale_offers and not rent_offers and not debug_radius:
-                    logging.warning("⚠️ Нет объявлений, включаем режим отладки (радиус 1000 км)")
-                    effective_radius = 10
-                
-                # Фильтруем объявления по расстоянию от лота
-                logging.info(f"Фильтрация объявлений по расстоянию (макс. {effective_radius} км) для лота {lot.id}")
-                
-                # Используем безопасную фильтрацию с резервным механизмом
-                try:
-                    filtered_sale_offers = await filter_offers_by_distance(lot.address, sale_offers, effective_radius)
-                except Exception as e:
-                    logging.error(f"Ошибка при фильтрации объявлений о продаже: {e}")
-                    filtered_sale_offers = await filter_offers_without_geocoding(lot.address, sale_offers)
-                
-                try:
-                    filtered_rent_offers = await filter_offers_by_distance(lot.address, rent_offers, effective_radius)
-                except Exception as e:
-                    logging.error(f"Ошибка при фильтрации объявлений об аренде: {e}")
-                    filtered_rent_offers = await filter_offers_without_geocoding(lot.address, rent_offers)
-                
-                # Обновляем статистику по районам
-                for offer in filtered_sale_offers:
-                    if not hasattr(offer, 'district') or not offer.district:
-                        offer.district = calculate_district(offer.address)
-                    offers_by_district[offer.district].append(offer)
-                    district_offer_count[offer.district] += 1
-                
-                # Добавляем в пакеты для последующей записи
-                current_batch_sale.extend(filtered_sale_offers)
-                current_batch_rent.extend(filtered_rent_offers)
-                all_sale_offers.extend(filtered_sale_offers)
-                all_rent_offers.extend(filtered_rent_offers)
-                
-                # ВАЖНО: Рассчитываем метрики на основе ВСЕХ объявлений
-                # а не только отфильтрованных
-                calculate_lot_metrics(lot, filtered_sale_offers, filtered_rent_offers)
-                
-                # Добавляем классификацию объекта через GPT
-                if CONFIG.get("gpt_analysis_enabled", False):
-                    try:
-                        lot.classification = await classify_property(lot)
-                    except Exception as e:
-                        logging.error(f"Ошибка при классификации объекта {lot.id}: {e}")
-                        # Создаем пустую классификацию если произошла ошибка
-                        lot.classification = PropertyClassification()
-                else:
-                    lot.classification = PropertyClassification()
-                
-                # Сохраняем лот в основную таблицу
-                push_lots([lot], "lots_all")
-                logging.info(f"✅ Сохранен лот {lot.id} в таблицу lots_all")
-                
-                # Сохраняем обработанный лот
-                processed_lots.append(lot)
-                processed_indices.add(i)
-                
-                # Отправляем пакеты объявлений в Google Sheets
-                if len(current_batch_sale) >= batch_size:
-                    logging.info(f"Сохраняем пакет из {len(current_batch_sale)} объявлений о продаже")
-                    push_offers("cian_sale_all", current_batch_sale)
-                    current_batch_sale = []
-                    
-                if len(current_batch_rent) >= batch_size:
-                    logging.info(f"Сохраняем пакет из {len(current_batch_rent)} объявлений об аренде")
-                    push_offers("cian_rent_all", current_batch_rent)
-                    current_batch_rent = []
-                
-                # Периодическое сохранение контрольной точки
-                if i % lot_save_interval == 0 or i == len(lots) - 1:
-                    # Сохраняем чекпоинт
-                    save_progress_checkpoint(
-                        lots=lots,
-                        processed_indices=list(processed_indices),
-                        offers_by_district=dict(offers_by_district),
-                        district_offer_count=dict(district_offer_count),
-                        all_sale_offers=all_sale_offers,
-                        all_rent_offers=all_rent_offers
-                    )
-                    logging.info(f"💾 Создана контрольная точка для {len(processed_lots)} лотов")
-                
-                # Добавляем небольшую паузу между лотами
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                logging.error(f"❌ Ошибка при обработке лота {getattr(lot, 'id', 'unknown')}: {e}", exc_info=True)
-                # Не прерываем всю обработку из-за одного лота
-                continue
-        
-        # Сохраняем оставшиеся объявления
-        if current_batch_sale:
-            logging.info(f"Сохраняем оставшиеся {len(current_batch_sale)} объявлений о продаже")
-            push_offers("cian_sale_all", current_batch_sale)
-            
-        if current_batch_rent:
-            logging.info(f"Сохраняем оставшиеся {len(current_batch_rent)} объявлений об аренде")
-            push_offers("cian_rent_all", current_batch_rent)
-            
-        # Рассчитываем и экспортируем статистику по районам
-        median_prices = calculate_median_prices(offers_by_district)
-        export_price_statistics()
-        
-        # Отправляем окончательную статистику по районам
-        if district_offer_count:
-            logging.info(f"Отправка статистики по {len(district_offer_count)} районам")
-            push_district_stats(dict(district_offer_count))
-        else:
-            # Создаем заглушку для избежания ошибок
-            logging.warning("Нет данных о районах. Создаем заглушку для статистики.")
-            push_district_stats({"Москва": 0})
-        
-        logging.info("✅ Обработка успешно завершена!")
-            
-    except Exception as e:
-        logging.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}", exc_info=True)
-        # Сохраняем состояние для отладки
-        try:
-            with open(f"crash_dump_{int(time.time())}.pkl", "wb") as f:
-                pickle.dump({
-                    "lots": locals().get("lots", []),
-                    "offers_by_district": locals().get("offers_by_district", {}),
-                    "error": str(e)
-                }, f)
-            logging.info("✅ Сохранено состояние для отладки")
-        except Exception as dump_error:
-            logging.error(f"❌ Не удалось сохранить состояние: {dump_error}")
-            
-if __name__ == "__main__":
-    asyncio.run(main())
+               f"Плюсики: {lot.plus_count}/2, "
+               f"Статус: {lot.status}")
+               
+    return lot

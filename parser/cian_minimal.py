@@ -27,6 +27,7 @@ log = logging.getLogger("parser.cian_minimal")
 # Константы поиска CIAN
 moscow_district_name_to_cian_id: dict[str, int] | None = None
 
+
 # Базовые URLs и константы
 CIAN_MAIN_URL = "https://cian.ru/"
 CIAN_DISTRICTS = "https://www.cian.ru/api/geo/get-districts-tree/?locationId=1"
@@ -57,6 +58,45 @@ address_replacements = {
 
 # Импортируем модели
 from core.models import Lot, Offer
+# Добавим новую функцию для определения типов недвижимости на ЦИАН в зависимости от категории лота
+def get_property_types_for_category(property_category: str) -> tuple[list[str], list[int]]:
+    """
+    Возвращает список типов коммерческой недвижимости и их кодов для поиска на ЦИАН
+    в зависимости от категории лота с торгов.
+    
+    Args:
+        property_category: Категория объекта с торгов
+        
+    Returns:
+        tuple: (список типов для логирования, список кодов для URL запроса)
+    """
+    # Нормализуем строку для упрощения проверок
+    category = property_category.lower().strip() if property_category else ""
+    
+    # Карта соответствия категорий лотов и типов недвижимости на ЦИАН
+    if any(x in category for x in ["нежил", "помещени"]):
+        return ["Офис", "Торговая площадь", "Помещение свободного назначения"], [1, 2, 3]
+    
+    elif any(x in category for x in ["иной объект", "право размещения нто", "нестационар"]):
+        return ["Торговая площадь", "Помещение свободного назначения"], [2, 3]
+    
+    elif any(x in category for x in ["имущественный комплекс", "единый недвижимый комплекс", "сооружени"]):
+        return ["Склад", "Производство"], [4, 5]
+    
+    elif any(x in category for x in ["производственн"]):
+        return ["Производство"], [5]
+    
+    elif any(x in category for x in ["здани", "нежилое здани", "комплекс здани"]):
+        return ["Здание"], [6]
+    
+    elif any(x in category for x in ["земельн", "земли сельхоз", "комплексное развитие территори", "земли населен"]):
+        return ["Коммерческая земля"], [7]
+    
+    elif any(x in category for x in ["торговл", "объект торговли"]):
+        return ["Торговая площадь", "Помещение свободного назначения"], [2, 3]
+    
+    # Дефолтный вариант - все типы коммерческой недвижимости
+    return ["Офис", "Торговая площадь", "ПСН", "Склад", "Производство", "Здание", "Земля"], [1, 2, 3, 4, 5, 6, 7]
 
 class CianParser:
     def __init__(self):
@@ -954,8 +994,8 @@ class CianParser:
                     return None
                     
                 # Проверка, что площадь указана
-                if not area:
-                    log.warning(f"Площадь не указана для {offer_url}")
+                if not area or area < 60:
+                    log.warning(f"Площадь не указана или меньше 60м² для {offer_url}")
                     return None
                     
                 # Извлекаем адрес и цену
@@ -993,15 +1033,34 @@ class CianParser:
             return None
 
 
-    def parse_nearby_offers(self, search_filter: str, lot_uuid: str) -> Tuple[List[Offer], List[Offer]]:
-        """Оптимизированная функция получения объявлений о продаже и аренде"""
+    def parse_nearby_offers(self, search_filter: str, lot_uuid: str, property_category: str = "") -> Tuple[List[Offer], List[Offer]]:
+        """Оптимизированная функция получения объявлений о продаже и аренде с учетом категории лота"""
         sale_offers = []
         rent_offers = []
+        unique_sales = {}
+        unique_rents = {}
         
-        # Обрабатываем только важные типы поиска
+        # Получаем типы недвижимости для поиска на основе категории лота
+        property_types, property_codes = get_property_types_for_category(property_category)
+        log.info(f"Выбраны типы недвижимости для поиска: {', '.join(property_types)}")
+        
+        # Формируем URL параметры для типов недвижимости
+        types_url_param = "&".join([f"office_type[{i}]={code}" for i, code in enumerate(property_codes)])
+        
+        # Базовые URL для поиска с учетом выбранных типов
+        sale_url_template = (
+            "https://www.cian.ru/cat.php?deal_type=sale&engine_version=2"
+            f"&offer_type=offices&{types_url_param}&{{}}"
+        )
+        rent_url_template = (
+            "https://www.cian.ru/cat.php?deal_type=rent&engine_version=2"
+            f"&offer_type=offices&{types_url_param}&{{}}"
+        )
+
+        # Обрабатываем типы поиска
         search_types = [
-            (sale_offers, "sale", CIAN_SALE_SEARCH, "продажа"),
-            (rent_offers, "rent", CIAN_RENT_SEARCH, "аренда"),
+            (sale_offers, "sale", sale_url_template, "продажа"),
+            (rent_offers, "rent", rent_url_template, "аренда"),
         ]
         
         for offers_list, offer_type, url_template, desc in search_types:
@@ -1029,12 +1088,6 @@ class CianParser:
             # Получаем ссылки на объявления
             offer_urls = self.extract_offer_links(search_soup)
             
-            # Ограничиваем количество объявлений для обработки
-            """max_offers = 10
-            if len(offer_urls) > max_offers:
-                log.info(f"Ограничиваем до {max_offers} объявлений")
-                offer_urls = offer_urls[:max_offers]"""
-            
             # Обработка объявлений
             for i, offer_url in enumerate(offer_urls):
                 try:
@@ -1058,8 +1111,18 @@ class CianParser:
                     continue
         
         # Дедупликация и завершение
-        unique_sale_offers = list({o.id: o for o in sale_offers}.values())
-        unique_rent_offers = list({o.id: o for o in rent_offers}.values())
+        for offer in sale_offers:
+            signature = f"{offer.address}|{offer.area}|{offer.price}"
+            if offer.id not in unique_sales and signature not in unique_sales.values():
+                unique_sales[offer.id] = signature
+
+        for offer in rent_offers:
+            signature = f"{offer.address}|{offer.area}|{offer.price}"
+            if offer.id not in unique_rents and signature not in unique_rents.values():
+                unique_rents[offer.id] = signature
+        
+        unique_sale_offers = [o for o in sale_offers if o.id in unique_sales]
+        unique_rent_offers = [o for o in rent_offers if o.id in unique_rents]
         
         log.info(f"Всего найдено: {len(unique_sale_offers)} объявлений о продаже, {len(unique_rent_offers)} объявлений об аренде")
         return unique_sale_offers, unique_rent_offers
@@ -1074,9 +1137,9 @@ def get_parser() -> CianParser:
         _parser_instance = CianParser()
     return _parser_instance
 
-def fetch_nearby_offers(search_filter: str, lot_uuid: str) -> Tuple[List[Offer], List[Offer]]:
+def fetch_nearby_offers(search_filter: str, lot_uuid: str, property_category: str = "") -> Tuple[List[Offer], List[Offer]]:
     """Обертка для получения объявлений по фильтру"""
-    return get_parser().parse_nearby_offers(search_filter, lot_uuid)
+    return get_parser().parse_nearby_offers(search_filter, lot_uuid, property_category)
 
 def unformatted_address_to_cian_search_filter(address: str) -> str:
     """Обертка для преобразования адреса в поисковый фильтр"""

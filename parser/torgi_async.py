@@ -82,36 +82,40 @@ def _to_lot(d: dict[str, Any]) -> Lot:
     """Преобразует JSON-данные лота в объект Lot."""
     chars = d.get("characteristics", [])
     area = float(_char(chars, "totalAreaRealty", 0))
-    dt = lambda k: isoparse(d[k]).astimezone(timezone.utc) if d.get(k) else datetime.now(timezone.utc)
-    return Lot(
-        id=str(d["id"]),
-        name=d.get("lotName", ""),
-        address=d.get("estateAddress", ""),
-        coords=None,
-        area=area,
-        price=d.get("priceMin", 0.0),
-        notice_number=d.get("noticeNumber", ""),
-        lot_number=d.get("lotNumber", 0),
-        auction_type=d.get("biddForm", {}).get("name", ""),
-        sale_type=d.get("biddType", {}).get("name", ""),
-        law_reference=d.get("npaHintCode", ""),
-        application_start=dt("biddStartTime"),
-        application_end=dt("biddEndTime"),
-        auction_start=dt("auctionStartDate"),
-        cadastral_number=_char(chars, "cadastralNumberRealty", ""),
-        property_category=d.get("category", {}).get("name", ""),
-        ownership_type=d.get("ownershipForm", {}).get("name", ""),
-        auction_step=d.get("priceStep", 0.0),
-        deposit=d.get("deposit", 0.0),
-        recipient=d.get("depositRecipientName", ""),
-        recipient_inn=d.get("depositRecipientINN", ""),
-        recipient_kpp=d.get("depositRecipientKPP", ""),
-        bank_name=d.get("depositBankName", ""),
-        bank_bic=d.get("depositBIK", ""),
-        bank_account=d.get("depositPayAccount", ""),
-        correspondent_account=d.get("depositCorAccount", ""),
-        auction_url=PUBLIC.format(d["id"]),
-    )
+    if area > 60:
+        
+        dt = lambda k: isoparse(d[k]).astimezone(timezone.utc) if d.get(k) else datetime.now(timezone.utc)
+        return Lot(
+            id=str(d["id"]),
+            name=d.get("lotName", ""),
+            address=d.get("estateAddress", ""),
+            coords=None,
+            area=area,
+            price=d.get("priceMin", 0.0),
+            notice_number=d.get("noticeNumber", ""),
+            lot_number=d.get("lotNumber", 0),
+            auction_type=d.get("biddForm", {}).get("name", ""),
+            sale_type=d.get("biddType", {}).get("name", ""),
+            law_reference=d.get("npaHintCode", ""),
+            application_start=dt("biddStartTime"),
+            application_end=dt("biddEndTime"),
+            auction_start=dt("auctionStartDate"),
+            cadastral_number=_char(chars, "cadastralNumberRealty", ""),
+            property_category=d.get("category", {}).get("name", ""),
+            ownership_type=d.get("ownershipForm", {}).get("name", ""),
+            auction_step=d.get("priceStep", 0.0),
+            deposit=d.get("deposit", 0.0),
+            recipient=d.get("depositRecipientName", ""),
+            recipient_inn=d.get("depositRecipientINN", ""),
+            recipient_kpp=d.get("depositRecipientKPP", ""),
+            bank_name=d.get("depositBankName", ""),
+            bank_bic=d.get("depositBIK", ""),
+            bank_account=d.get("depositPayAccount", ""),
+            correspondent_account=d.get("depositCorAccount", ""),
+            auction_url=PUBLIC.format(d["id"]),
+        )
+    else:
+        logger.info(f"Пропуск лота с площадью {area}м² (меньше 60м²)")
 
 async def fetch_lots(max_pages: int = 10) -> List[Lot]:
     """
@@ -178,11 +182,27 @@ async def fetch_lots(max_pages: int = 10) -> List[Lot]:
                         "комплексное развитие территорий", "земли сельскохозяйственного назначения",
                         "земли населенных пунктов", "земельные участки"
                     ]
-
+                    chars = detail.get("characteristics", [])
+                    area = float(_char(chars, "totalAreaRealty", 0))
+        
+                    # ФИЛЬТР 1: Проверка минимальной площади (60 кв.м)
+                    if area < 60:
+                        logger.info(f"Пропуск лота {lot_id} с площадью {area}м² (меньше 60м²)")
+                        continue
                     # После получения данных о лоте, но перед добавлением в список
                     property_category = detail.get("category", {}).get("name", "").lower()
                     if not any(category.lower() in property_category for category in valid_torgi_categories):
                         logger.info(f"Пропуск лота категории '{property_category}' (не соответствует критериям)")
+                        continue
+                    parking_keywords = ["парковк", "паркинг", "машиноместо", "машино-место", "парковочное место"]
+                    if any(keyword in property_category.lower() or 
+                        keyword in detail.get("lotName", "").lower() for keyword in parking_keywords):
+                        logger.info(f"Пропуск лота {lot_id}: обнаружены ключевые слова парковки/машиноместа")
+                        continue
+
+                    cadastral_number = _char(chars, "cadastralNumberRealty", "")
+                    if cadastral_number and not (cadastral_number.startswith('50:') or cadastral_number.startswith('77:')):
+                        logger.info(f"Пропуск лота {lot_id}: кадастровый номер {cadastral_number} не относится к Москве/МО")
                         continue
                     # Преобразуем JSON в объект Lot
                     lot = _to_lot(detail)

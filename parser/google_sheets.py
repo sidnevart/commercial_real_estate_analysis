@@ -215,7 +215,13 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
                     has_basement,  # Наличие подвала
                     is_top_floor,  # Верхний этаж
                     getattr(lot, 'sale_offers_count', 0),  # Найдено предложений о продаже
-                    getattr(lot, 'rent_offers_count', 0) # Найдено предложений об аренде
+                    getattr(lot, 'rent_offers_count', 0),
+                    getattr(lot, 'filtered_sale_offers_count', 0),
+                    getattr(lot, 'filtered_rent_offers_count', 0),
+                    getattr(lot, 'plus_rental', 0),
+                    getattr(lot, 'plus_sale', 0),
+                    getattr(lot, 'plus_count', 0),
+                    getattr(lot, 'status', 'unknown'), # Найдено предложений об аренде
                 ]
                 rows.append(row)
             except Exception as e:
@@ -351,8 +357,13 @@ def push_offers(sheet_name: str, offers: List[Offer]):
             price_per_sqm = offer.price / offer.area if offer.area > 0 else 0
             logger.info(f"📍 Сохраняем адрес объявления {offer.id} [{i}/{len(new_offers)}]: '{offer.address}'")
             
-            if not offer.address or offer.address == "Москва" or len(offer.address) < 10:
-                logger.warning(f"⚠️ ОБНАРУЖЕН НЕДЕЙСТВИТЕЛЬНЫЙ АДРЕС для объявления {offer.id}: '{offer.address}'")
+            # Убедимся, что у объявления есть атрибут district
+            if not hasattr(offer, 'district') or not offer.district:
+                # Импортируем функцию calculate_district из parser.main
+                from parser.main import calculate_district
+                offer.district = calculate_district(offer.address)
+                logger.info(f"Вычислен район для объявления {offer.id}: {offer.district}")
+            
             row = [
                 next_row_number + i - 1,  # № с учетом смещения
                 offer.address,  # Адрес
@@ -490,7 +501,9 @@ def setup_lots_all_header():
         "Общая стоимость (рыночная), ₽", "Капитализация, ₽", "Капитализация, %",
         "ГАП (рыночный), ₽/мес", "Доходность (рыночная), %", "Аукцион", "Документ", 
         "URL аукциона", "UUID (technical)", "Категория размера", "Наличие подвала", "Верхний этаж",
-        "Найдено предл. продажи", "Найдено предл. аренды"  # Новые колонки
+        "Найдено предл. продажи", "Найдено предл. аренды",
+        "Отфильтровано предл. продажи", "Отфильтровано предл. аренды",
+        "Плюсик за аренду", "Плюсик за продажу", "Всего плюсиков", "Статус"   # Новые колонки
     ]
     
     try:
