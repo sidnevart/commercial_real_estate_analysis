@@ -8,7 +8,7 @@ daily_check_enabled: true
 gpt_analysis_enabled: true
 advantage_price_threshold: -30
 market_yield_threshold: 10 
-
+gpt_metrics_enabled: true
 
 # GPT prompt templates
 gpt_prompt_template: |
