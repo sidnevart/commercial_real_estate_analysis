@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from core.models import Lot, Offer
@@ -267,6 +267,30 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
                     color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
                 )
                 logger.info("Добавлено форматирование доходности")
+                
+        
+                
+                # Форматирование для капитализации (колонка L)
+                _format_cells(
+                    sheet_id=sheet_id,
+                    start_row=1,
+                    end_row=last_row + 1,
+                    column=11,  # Колонка L (капитализация, %)
+                    condition="NUMBER_GREATER_THAN_OR_EQUAL 1",
+                    color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}
+                )
+
+
+                _format_cells(
+                    sheet_id=sheet_id,
+                    start_row=1,
+                    end_row=last_row + 1,
+                    column=11,  # Column L (index 11)
+                    condition="NUMBER_GREATER 0",  # Changed from NUMBER_GREATER_THAN_OR_EQUAL 1 to NUMBER_GREATER 0
+                    color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Green color
+                )
+                
+                logging.info("Добавлено форматирование для доходности и капитализации")
         except Exception as e:
             logger.error(f"Ошибка при применении форматирования таблицы: {e}")
     
@@ -901,3 +925,261 @@ def setup_all_headers():
     logger.info("Настройка заголовков завершена")
 
 setup_all_headers()
+
+def find_lot_by_uuid(lot_uuid: str, sheet_name: str = "lots_all") -> Optional[Lot]:
+    """
+    Поиск лота по UUID в Google Sheets
+    
+    Args:
+        lot_uuid: UUID лота для поиска
+        sheet_name: Название листа для поиска (по умолчанию "lots_all")
+    
+    Returns:
+        Объект Lot если найден, иначе None
+    """
+    try:
+        logger.info(f"Поиск лота с UUID {lot_uuid} в листе {sheet_name}")
+        
+        # Получаем все данные из листа
+        result = _svc.spreadsheets().values().get(
+            spreadsheetId=GSHEET_ID,
+            range=f"{sheet_name}!A:R"  # Берем все колонки до UUID (колонка R)
+        ).execute()
+        
+        values = result.get('values', [])
+        if not values:
+            logger.warning(f"Лист {sheet_name} пуст")
+            return None
+        
+        # Первая строка - заголовки
+        headers = values[0] if values else []
+        
+        # Находим индекс колонки с UUID
+        uuid_column_index = None
+        for i, header in enumerate(headers):
+            if "UUID" in header:
+                uuid_column_index = i
+                break
+        
+        if uuid_column_index is None:
+            logger.error(f"Колонка UUID не найдена в листе {sheet_name}")
+            return None
+        
+        # Ищем строку с нужным UUID
+        for row_index, row in enumerate(values[1:], start=2):  # Пропускаем заголовки
+            if len(row) > uuid_column_index and row[uuid_column_index] == lot_uuid:
+                logger.info(f"Найден лот с UUID {lot_uuid} в строке {row_index}")
+                
+                # Создаем объект Lot из найденной строки
+                try:
+                    # Функция для безопасного парсинга чисел с запятыми
+                    def safe_float(value):
+                        if not value:
+                            return 0.0
+                        try:
+                            # Заменяем запятые на точки для парсинга float
+                            return float(str(value).replace(',', '.'))
+                        except:
+                            return 0.0
+                    
+                    from datetime import datetime
+                    from uuid import UUID
+                    
+                    lot = Lot(
+                        id=row[0] if len(row) > 0 else "",
+                        name=row[1] if len(row) > 1 else "",
+                        address=row[2] if len(row) > 2 else "",
+                        coords=None,  # Координаты не сохраняем в таблице
+                        area=safe_float(row[5]) if len(row) > 5 else 0.0,
+                        price=safe_float(row[8]) if len(row) > 8 else 0.0,
+                        notice_number=row[15] if len(row) > 15 else "",
+                        lot_number=0,  # Не сохраняем в таблице
+                        auction_type=row[14] if len(row) > 14 else "",
+                        sale_type="",  # Не сохраняем в таблице
+                        law_reference="",  # Не сохраняем в таблице
+                        application_start=datetime.now(),  # Значения по умолчанию
+                        application_end=datetime.now(),
+                        auction_start=datetime.now(),
+                        cadastral_number="",  # Не сохраняем в таблице
+                        property_category="",  # Не сохраняем в таблице
+                        ownership_type="",  # Не сохраняем в таблице
+                        auction_step=0.0,  # Не сохраняем в таблице
+                        deposit=0.0,  # Не сохраняем в таблице
+                        recipient="",  # Не сохраняем в таблице
+                        recipient_inn="",  # Не сохраняем в таблице
+                        recipient_kpp="",  # Не сохраняем в таблице
+                        bank_name="",  # Не сохраняем в таблице
+                        bank_bic="",  # Не сохраняем в таблице
+                        bank_account="",  # Не сохраняем в таблице
+                        correspondent_account="",  # Не сохраняем в таблице
+                        auction_url=row[16] if len(row) > 16 else "",
+                        uuid=UUID(lot_uuid),  # Конвертируем в UUID
+                        district=row[3] if len(row) > 3 else ""
+                    )
+                    return lot
+                except Exception as e:
+                    logger.error(f"Ошибка при создании объекта Lot из строки: {e}")
+                    return None
+        
+        logger.info(f"Лот с UUID {lot_uuid} не найден в листе {sheet_name}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Ошибка при поиске лота по UUID {lot_uuid}: {e}")
+        return None
+
+
+def find_analogs_in_sheets(lot_uuid: str, radius_km: float = 3.0) -> List[Offer]:
+    """
+    Поиск аналогов для лота по UUID в листах cian_sale_all и cian_rent_all
+    
+    Args:
+        lot_uuid: UUID лота для поиска аналогов
+        radius_km: Радиус поиска (пока не используется, но может быть полезен в будущем)
+    
+    Returns:
+        Список найденных аналогов
+    """
+    try:
+        logger.info(f"Поиск аналогов для лота {lot_uuid} в Google Sheets")
+        analogs = []
+        
+        # Ищем в листах продаж и аренды
+        for sheet_name in ["cian_sale_all", "cian_rent_all"]:
+            try:
+                # Получаем данные из листа
+                result = _svc.spreadsheets().values().get(
+                    spreadsheetId=GSHEET_ID,
+                    range=f"{sheet_name}!A:J"  # Берем все основные колонки
+                ).execute()
+                
+                values = result.get('values', [])
+                if not values:
+                    logger.info(f"Лист {sheet_name} пуст")
+                    continue
+                
+                headers = values[0] if values else []
+                logger.info(f"Поиск в листе {sheet_name}, найдено {len(values)-1} строк")
+                
+                # Находим индекс колонки с UUID лота
+                lot_uuid_column_index = None
+                for i, header in enumerate(headers):
+                    if "UUID лота" in header or "lot_uuid" in header.lower():
+                        lot_uuid_column_index = i
+                        break
+                
+                if lot_uuid_column_index is None:
+                    logger.warning(f"Колонка UUID лота не найдена в листе {sheet_name}")
+                    continue
+                
+                # Ищем строки с нужным UUID лота
+                found_count = 0
+                for row in values[1:]:  # Пропускаем заголовки
+                    if len(row) > lot_uuid_column_index and row[lot_uuid_column_index] == lot_uuid:
+                        try:
+                            # Функция для безопасного парсинга чисел с запятыми
+                            def safe_float(value):
+                                if not value:
+                                    return 0.0
+                                try:
+                                    # Заменяем запятые на точки для парсинга float
+                                    return float(str(value).replace(',', '.'))
+                                except:
+                                    return 0.0
+                            
+                            # Создаем объект Offer из найденной строки
+                            offer = Offer(
+                                id=row[9] if len(row) > 9 else "",  # ID объявления
+                                lot_uuid=lot_uuid,
+                                price=safe_float(row[5]) if len(row) > 5 else 0.0,
+                                area=safe_float(row[3]) if len(row) > 3 else 0.0,
+                                url=row[7] if len(row) > 7 else "",
+                                type="sale" if "sale" in sheet_name else "rent",
+                                address=row[1] if len(row) > 1 else "",
+                                district=row[2] if len(row) > 2 else "",
+                                distance_to_lot=safe_float(row[6]) if len(row) > 6 else 0.0
+                            )
+                            analogs.append(offer)
+                            found_count += 1
+                        except Exception as e:
+                            logger.error(f"Ошибка при создании объекта Offer: {e}")
+                            continue
+                
+                logger.info(f"Найдено {found_count} аналогов в листе {sheet_name}")
+                
+            except Exception as e:
+                logger.error(f"Ошибка при поиске в листе {sheet_name}: {e}")
+                continue
+        
+        logger.info(f"Всего найдено {len(analogs)} аналогов для лота {lot_uuid}")
+        return analogs
+        
+    except Exception as e:
+        logger.error(f"Ошибка при поиске аналогов для лота {lot_uuid}: {e}")
+        return []
+
+def _get_offers_from_sheet(sheet_name: str, lot_uuid: str, offer_type: str) -> List[Offer]:
+    """
+    Получение объявлений для указанного лота из конкретной таблицы
+    
+    Args:
+        sheet_name: Имя листа (cian_sale_all или cian_rent_all)
+        lot_uuid: UUID лота
+        offer_type: Тип объявления (sale или rent)
+        
+    Returns:
+        Список объявлений
+    """
+    try:
+        # Получаем данные из таблицы
+        result = _svc.spreadsheets().values().get(
+            spreadsheetId=GSHEET_ID,
+            range=f"{sheet_name}!A:Z"
+        ).execute()
+        
+        values = result.get('values', [])
+        if not values or len(values) < 2:
+            return []
+        
+        offers = []
+        
+        # Ищем объявления с соответствующим UUID лота (колонка I, индекс 8)
+        for i, row in enumerate(values[1:], 1):  # Пропускаем заголовок
+            if len(row) > 8 and str(row[8]) == str(lot_uuid):
+                try:
+                    from core.models import Offer
+                    from uuid import UUID
+                    
+                    # Функция для безопасного парсинга чисел с запятыми
+                    def safe_float(value):
+                        if not value:
+                            return 0.0
+                        try:
+                            # Заменяем запятые на точки для парсинга float
+                            return float(str(value).replace(',', '.'))
+                        except:
+                            return 0.0
+                    
+                    offer = Offer(
+                        id=f"{offer_type}_{sheet_name}_{i}",
+                        lot_uuid=UUID(lot_uuid),
+                        address=row[1] if len(row) > 1 else "",
+                        area=safe_float(row[3]) if len(row) > 3 else 0.0,
+                        price=safe_float(row[5]) if len(row) > 5 else 0.0,
+                        url=row[7] if len(row) > 7 else "",
+                        type=offer_type,
+                        district=row[2] if len(row) > 2 else "",
+                        distance_to_lot=safe_float(row[6]) if len(row) > 6 else 0.0
+                    )
+                    
+                    offers.append(offer)
+                    
+                except Exception as e:
+                    logger.warning(f"Error parsing offer from {sheet_name} row {i+1}: {e}")
+                    continue
+        
+        return offers
+        
+    except Exception as e:
+        logger.error(f"Error getting offers from {sheet_name} for lot {lot_uuid}: {e}")
+        return []

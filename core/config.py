@@ -13,6 +13,11 @@ DEFAULT_CONFIG = {
     "daily_check_enabled": True,
     "gpt_analysis_enabled": True,
     "advantage_price_threshold": -30,  # % threshold for highlighting profitable lots
+    "market_yield_threshold": 10,  # % threshold for recommendation
+    "telegram_bot_token": "7927196434:AAFFuvxIGSI3IWnkYbyNrEUPUAhdVsvoEnQ",  # Telegram bot token
+    "telegram_notifications_enabled": True,  # Enable/disable telegram notifications
+    "market_deviation_threshold": -15,  # % threshold for market deviation notifications
+    "min_capitalization_threshold": 500000,  # Minimum capitalization for notifications (rubles)
     "gpt_prompt_template": """
 You are a real estate classification expert. Based on the property description and details, classify it into one of these categories:
 

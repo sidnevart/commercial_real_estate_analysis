@@ -50,6 +50,17 @@ CIAN_RENT_SEARCH_LAND = (
     "https://www.cian.ru/cat.php?cats[0]=commercialLandRent&deal_type=rent&engine_version=2&offer_type=offices&{}"
 )
 
+# Add these imports to the top of cian_minimal.py
+from pathlib import Path
+from typing import Dict, Optional, Union
+
+# Add these constants after the other CIAN URLs
+STREETS_FILE = Path("parser/data/cian_street_ids_simple.json")
+STREETS_DETAILED_FILE = Path("parser/data/cian_streets_database.json")
+
+# Global variable to store street mapping
+street_name_to_id_mapping: Dict[str, str] = {}
+
 # Замены для адресов
 address_replacements = {
     "р-н": "район",
@@ -98,6 +109,29 @@ def get_property_types_for_category(property_category: str) -> tuple[list[str], 
     # Дефолтный вариант - все типы коммерческой недвижимости
     return ["Офис", "Торговая площадь", "ПСН", "Склад", "Производство", "Здание", "Земля"], [1, 2, 3, 4, 5, 6, 7]
 
+
+def load_street_ids() -> Dict[str, str]:
+    """Load street ID mapping from file"""
+    global street_name_to_id_mapping
+    
+    if street_name_to_id_mapping:
+        # Already loaded
+        return street_name_to_id_mapping
+    
+    try:
+        if STREETS_FILE.exists():
+            with open(STREETS_FILE, "r", encoding="utf-8") as f:
+                street_name_to_id_mapping = json.load(f)
+                log.info(f"Loaded {len(street_name_to_id_mapping)} street IDs from {STREETS_FILE}")
+        else:
+            log.warning(f"Street ID mapping file not found: {STREETS_FILE}")
+            street_name_to_id_mapping = {}
+    except Exception as e:
+        log.error(f"Error loading street IDs: {e}")
+        street_name_to_id_mapping = {}
+        
+    return street_name_to_id_mapping
+
 class CianParser:
     def __init__(self):
         # Хранилища для драйвера и главной вкладки
@@ -106,6 +140,9 @@ class CianParser:
         
         # Инициализируем словарь районов
         self.init_district_mapping()
+        
+        # Загружаем кэш улиц
+        load_street_ids()
         
         # Создаём кэш для адресных фильтров
         self._address_filter_cache = {}
@@ -235,7 +272,66 @@ class CianParser:
             log.error(f"Ошибка при создании драйвера: {e}")
             time.sleep(30)  # Длительная пауза перед повторной попыткой
             self.initialize_driver()  # Рекурсивно пробуем снова
-
+    def find_street_id(self, street_name: str) -> Optional[str]:
+        """
+        Find street ID from the cached mapping
+        
+        Args:
+            street_name: Street name to look up
+            
+        Returns:
+            Street ID if found, None otherwise
+        """
+        if not street_name:
+            return None
+        
+        # Load street mapping if not already loaded
+        street_mapping = load_street_ids()
+        if not street_mapping:
+            return None
+        
+        # Normalize street name for lookup
+        street_name_lower = street_name.lower().strip()
+        
+        # Try direct match first
+        for full_name, street_id in street_mapping.items():
+            # Extract street name without region
+            name_part = full_name.split(" (")[0].lower()
+            
+            # Check for exact match
+            if name_part == street_name_lower:
+                log.info(f"Found exact street match: '{street_name}' -> ID: {street_id}")
+                return street_id
+        
+        # Try partial match if exact match failed
+        for full_name, street_id in street_mapping.items():
+            name_part = full_name.split(" (")[0].lower()
+            
+            # Check for inclusion
+            if street_name_lower in name_part or name_part in street_name_lower:
+                log.info(f"Found partial street match: '{street_name}' ~ '{name_part}' -> ID: {street_id}")
+                return street_id
+                
+        # Try fuzzy matching
+        try:
+            best_match = process.extractOne(
+                street_name_lower,
+                [name.split(" (")[0].lower() for name in street_mapping.keys()],
+                scorer=fuzz.token_sort_ratio,
+                score_cutoff=85
+            )
+            
+            if best_match:
+                matched_name = best_match[0]
+                # Find the original key with this name
+                for full_name, street_id in street_mapping.items():
+                    if full_name.split(" (")[0].lower() == matched_name:
+                        log.info(f"Found fuzzy street match: '{street_name}' ~ '{matched_name}' -> ID: {street_id}")
+                        return street_id
+        except Exception as e:
+            log.warning(f"Error in fuzzy matching for '{street_name}': {e}")
+            
+        return None
     def refresh_main_page(self):
         """Обновляет главную страницу для сброса состояния"""
         try:
@@ -583,7 +679,111 @@ class CianParser:
             self._address_filter_cache[address] = result
             return result"""
 
-
+    def extract_street_id_from_address(self, address: str) -> Optional[str]:
+        """
+        Extract street ID from an address using CIAN's geocoding API
+        
+        Args:
+            address: Address text to process
+            
+        Returns:
+            Street ID if found, None otherwise
+        """
+        try:
+            # Step 1: Extract street name from address
+            street_name = None
+            
+            # Try common street patterns
+            street_patterns = [
+                r'(?:улица|ул\.|ул)\s+([А-Яа-я\-\s]+?)(?:,|\d|$)',
+                r'(?:проспект|пр-т|пр-кт)\s+([А-Яа-я\-\s]+?)(?:,|\d|$)',
+                r'(?:бульвар|б-р)\s+([А-Яа-я\-\s]+?)(?:,|\d|$)',
+                r'(?:шоссе|ш\.)\s+([А-Яа-я\-\s]+?)(?:,|\d|$)',
+                r'(?:переулок|пер\.|пер)\s+([А-Яа-я\-\s]+?)(?:,|\d|$)',
+                r'(?:набережная|наб\.|наб)\s+([А-Яа-я\-\s]+?)(?:,|\д|$)',
+                r'(?:проезд|пр-д)\s+([А-Яа-я\-\s]+?)(?:,|\д|$)',
+                r'(?:площадь|пл\.)\s+([А-Яа-я\-\s]+?)(?:,|\д|$)'
+            ]
+            
+            for pattern in street_patterns:
+                match = re.search(pattern, address)
+                if match:
+                    street_name = match.group(1).strip()
+                    break
+            
+            # If we found a street name directly in the address, try to look it up
+            if street_name:
+                street_id = self.find_street_id(street_name)
+                if street_id:
+                    return street_id
+            
+            # Step 2: If direct lookup failed, use geocoding
+            geocoding_response = self.get_json(CIAN_GEOCODE.format(address))
+            
+            if not geocoding_response or "items" not in geocoding_response:
+                log.warning(f"No geocoding results for address: {address}")
+                return None
+            
+            # Find first result for Moscow or Moscow Oblast
+            geocoding_result = None
+            for item in geocoding_response.get("items", []):
+                item_text = item.get("text", "")
+                if item_text.startswith("Россия, Моск"):  # Moscow or Moscow Oblast
+                    geocoding_result = item
+                    break
+            
+            if not geocoding_result:
+                log.warning(f"No Moscow/MO results for address: {address}")
+                return None
+            
+            # Get coordinates
+            lon, lat = geocoding_result.get("coordinates", [0, 0])
+            
+            if lon == 0 or lat == 0:
+                log.warning(f"Invalid coordinates for address: {address}")
+                return None
+            
+            # Step 3: Get street ID from coordinates
+            api_result = self.post_json(
+                CIAN_GEOCODE_FOR_SEARCH,
+                {"lat": lat, "lng": lon, "kind": "street"}
+            )
+            
+            if not api_result or "details" not in api_result:
+                log.warning(f"No street details for address: {address}")
+                return None
+            
+            # Get details from the result
+            details = api_result["details"]
+            
+            # Find street information (usually the last element)
+            for i in range(len(details)-1, -1, -1):
+                if "id" in details[i] and "fullName" in details[i]:
+                    name_lower = details[i]["fullName"].lower()
+                    
+                    # Check if this is a street
+                    street_markers = ["улица", "переулок", "проспект", "проезд", 
+                                    "шоссе", "бульвар", "площадь", "набережная"]
+                    
+                    if any(marker in name_lower for marker in street_markers):
+                        street_id = details[i]["id"]
+                        street_name = details[i]["fullName"]
+                        
+                        log.info(f"Found street via geocoding: {street_name} (ID: {street_id})")
+                        return street_id
+            
+            # If no specific street found, try the last element
+            if details and "id" in details[-1]:
+                street_id = details[-1]["id"]
+                street_name = details[-1].get("fullName", "Unknown")
+                
+                log.info(f"Using last element as street: {street_name} (ID: {street_id})")
+                return street_id
+                
+        except Exception as e:
+            log.error(f"Error extracting street ID for address {address}: {e}")
+        
+        return None
 
     def unformatted_address_to_cian_search_filter(self, address: str) -> str:
         """
@@ -594,6 +794,7 @@ class CianParser:
         - микрорайоны, деревни, посёлки
         - муниципальные округа
         - городские округа
+        - известные улицы с предварительно извлеченными ID
         
         Args:
             address: Текстовый адрес объекта
@@ -610,6 +811,16 @@ class CianParser:
             return self._address_filter_cache[address]
                 
         log.info(f"Определение поискового фильтра для адреса: «{address}»")
+        
+        # 1. Первый этап: Попытаемся найти id улицы напрямую по нашему кэшу улиц
+        street_id = self.extract_street_id_from_address(address)
+        if street_id:
+            result = f"street[0]={street_id}"
+            log.info(f"Найден ID улицы в кэше: {street_id} для адреса {address}")
+            self._address_filter_cache[address] = result
+            return result
+        
+        # 2. Если не нашли улицу в кэше, используем обычный алгоритм геокодирования
         
         # Расширенные замены для нормализации адреса
         extended_replacements = {
@@ -653,6 +864,25 @@ class CianParser:
         # Базовый регион по умолчанию
         default_result = "region=1" if is_likely_moscow else "region=4593" if is_likely_mo else None
         
+        # Если регион не определен, пробуем по первым словам
+        if not default_result:
+            first_part = address_lower.split(',')[0].strip()
+            if "москва" in first_part:
+                default_result = "region=1"
+            elif "область" in first_part and "московск" in first_part:
+                default_result = "region=4593"
+            else:
+                default_result = "region=4593"  # По умолчанию считаем, что это МО
+        
+        # Если регион не определен, пробуем по первым словам
+        if not default_result:
+            first_part = address_lower.split(',')[0].strip()
+            if "москва" in first_part:
+                default_result = "region=1"
+            elif "область" in first_part and "московск" in first_part:
+                default_result = "region=4593"
+            else:
+                default_result = "region=4593"  # По умолчанию считаем, что это МО
         # Если регион не определен, пробуем по первым словам
         if not default_result:
             first_part = address_lower.split(',')[0].strip()

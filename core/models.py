@@ -58,6 +58,7 @@ class Lot:
     annual_yield_percent: float = 0.0
     annual_income: float = 0.0
     average_rent_price_per_sqm: float = 0.0
+    market_deviation_percent: float = 0.0
     has_rent_data: bool = False
     market_value_method: str = "unknown"
 
