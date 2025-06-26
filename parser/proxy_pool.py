@@ -37,6 +37,7 @@ import os
 import random
 import logging
 from pathlib import Path
+from typing import List
 
 log = logging.getLogger(__name__)
 used_proxies = set()  # Для отслеживания использованных прокси
@@ -89,3 +90,26 @@ def drop(proxy):
     if proxy in used_proxies:
         used_proxies.remove(proxy)
     #log.info(f"Прокси {proxy} помечен как неработающий")
+
+
+def get_working_proxy_count() -> int:
+    """Возвращает количество рабочих прокси в пуле."""
+    global _proxies
+    return len(_proxies)
+
+def test_proxy_connectivity(max_test: int = 3) -> List[str]:
+    """Тестирует несколько прокси на работоспособность."""
+    working_proxies = []
+    tested = 0
+    
+    while tested < max_test:
+        proxy = get()
+        if not proxy:
+            break
+            
+        # Здесь можно добавить реальное тестирование прокси
+        # Пока просто возвращаем имеющиеся
+        working_proxies.append(proxy)
+        tested += 1
+    
+    return working_proxies

@@ -1,54 +1,23 @@
-# Property search settings
-search_area_granularity: район
+advantage_price_threshold: -30
 area_search_radius: 7
-debug_search_radius: 7
-
-# Processing settings
 daily_check_enabled: true
 gpt_analysis_enabled: true
-advantage_price_threshold: -30
-market_yield_threshold: 10 
-
-# Telegram Bot settings
-telegram_bot_token: "7927196434:AAFFuvxIGSI3IWnkYbyNrEUPUAhdVsvoEnQ"  # Токен бота для анализа недвижимости
-telegram_notifications_enabled: true 
-
-
-# GPT prompt template
-gpt_prompt_template: |
-  Вы эксперт по классификации недвижимости. На основе описания и характеристик объекта, классифицируйте его в одну из следующих категорий:
-
-  1. Стрит-ритейл (с входом с улицы):
-     - 70-120 м²
-     - 120-250 м²
-     - 250-500 м²
-     - 500-1000 м²
-     - 1000-1500 м²
-     - 1500+ м²
-
-  2. Офисы:
-     - 1000-3500 м²
-
-  3. Отдельно стоящее здание:
-     - Любой размер
-
-  4. Промышленные помещения:
-     - До 1000 м²
-     - 1000-3000 м²
-     - 3000-5000 м²
-
-  5. Коммерческая земля:
-     - От 1 га
-
-  Дополнительно укажите:
-  - Есть ли упоминание о подвале или полуподвале
-  - Есть ли указания, что это верхний этаж (ключевые слова: "последний этаж", "верхний этаж", "мансарда")
-
-  Детали объекта:
-  - Название: {name}
-  - Описание: {description}
-  - Площадь: {area} м²
-  - Категория недвижимости: {category}
-
-  Представьте свой ответ в формате JSON:
-  {{"category": "название_категории", "size_category": "диапазон_размера", "has_basement": true/false, "is_top_floor": true/false}}
+gpt_prompt_template: "\nYou are a real estate classification expert. Based on the\
+  \ property description and details, classify it into one of these categories:\n\n\
+  1. Street retail (with entrance from street):\n   - 70-120 m\xB2\n   - 120-250 m\xB2\
+  \n   - 250-500 m\xB2\n   - 500-1000 m\xB2\n   - 1000-1500 m\xB2\n   - 1500+ m\xB2\
+  \n\n2. Offices:\n   - 1000-3500 m\xB2\n\n3. Standalone building:\n   - Any size\n\
+  \n4. Industrial premises:\n   - Up to 1000 m\xB2\n   - 1000-3000 m\xB2\n   - 3000-5000\
+  \ m\xB2\n\n5. Commercial land:\n   - 1+ hectare\n\nAdditionally, indicate:\n- If\
+  \ there's any mention of basement or semi-basement\n- If there's any indication\
+  \ this is the top floor (keywords: \"last floor\", \"top floor\", \"mansard\")\n\
+  \nProperty details:\n- Name: {name}\n- Description: {description}\n- Area: {area}\
+  \ m\xB2\n- Property category: {category}\n\nFormat your answer as JSON:\n{{\"category\"\
+  : \"category_name\", \"size_category\": \"size_range\", \"has_basement\": true/false,\
+  \ \"is_top_floor\": true/false}}\n"
+market_deviation_threshold: -15
+market_yield_threshold: 10
+min_capitalization_threshold: 500000
+search_area_granularity: "\u0440\u0430\u0439\u043E\u043D"
+telegram_bot_token: 7927196434:AAFFuvxIGSI3IWnkYbyNrEUPUAhdVsvoEnQ
+telegram_notifications_enabled: true

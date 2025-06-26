@@ -1172,9 +1172,20 @@ class CianParser:
         return final_region
 
     def extract_offer_data(self, offer_page, offer_url, lot_uuid, offer_type):
-        """Извлекает данные о предложении с обработкой ошибок"""
+        """Извлекает данные о предложении с обработкой ошибок и улучшенным извлечением площади"""
         try:
             offer_soup = BeautifulSoup(offer_page, 'lxml')
+            
+            # Извлекаем площадь из заголовка
+            title_area = None
+            title_tag = offer_soup.find("h1")
+            if title_tag:
+                title_text = title_tag.get_text()
+                # Ищем площадь в заголовке (например: "120 м²", "120м²", "120 кв.м")
+                area_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:м²|кв\.?м|м2)', title_text, re.IGNORECASE)
+                if area_match:
+                    title_area = float(area_match.group(1))
+                    log.info(f"Найдена площадь в заголовке: {title_area} м²")
             
             # Поиск скрипта с данными объявления
             script_tag = None
@@ -1205,29 +1216,45 @@ class CianParser:
                     log.warning(f"Не найден блок данных объявления {offer_url}")
                     return None
                     
-                # Извлечение данных
-                area = None
+                # Извлечение площади из JSON
+                json_area = None
                 try:
                     if "land" in offer_info["offerData"]["offer"]:
                         land = offer_info["offerData"]["offer"]["land"]
-                        area = float(land["area"])
+                        json_area = float(land["area"])
                         
                         # Преобразуем в квадратные метры в зависимости от единицы измерения
                         if land.get("areaUnitType") == "sotka":
-                            area *= 100
+                            json_area *= 100
                         elif land.get("areaUnitType") == "hectare":
-                            area *= 10000
+                            json_area *= 10000
                     else:
-                        area = float(offer_info["offerData"]["offer"].get("totalArea", 0))
+                        json_area = float(offer_info["offerData"]["offer"].get("totalArea", 0))
                 except (KeyError, ValueError, TypeError):
-                    log.warning(f"Ошибка при извлечении площади для {offer_url}")
+                    log.warning(f"Ошибка при извлечении площади из JSON для {offer_url}")
+                
+                # Выбираем площадь: приоритет заголовку, если есть расхождение
+                if title_area and json_area:
+                    if abs(title_area - json_area) < 10:  # Допустимое расхождение 10 м²
+                        area = json_area  # Берем из JSON если близко
+                    else:
+                        area = title_area  # Берем из заголовка если есть расхождение
+                        log.info(f"Расхождение площади: заголовок={title_area}, JSON={json_area}, выбрана площадь из заголовка")
+                elif title_area:
+                    area = title_area
+                    log.info(f"Площадь взята из заголовка: {area} м²")
+                elif json_area:
+                    area = json_area
+                    log.info(f"Площадь взята из JSON: {area} м²")
+                else:
+                    log.warning(f"Площадь не найдена для {offer_url}")
                     return None
                     
                 # Проверка, что площадь указана
                 if not area or area < 60:
                     log.warning(f"Площадь не указана или меньше 60м² для {offer_url}")
                     return None
-                    
+                
                 # Извлекаем адрес и цену
                 try:
                     address = offer_info["adfoxOffer"]["response"]["data"]["unicomLinkParams"]["puid14"]

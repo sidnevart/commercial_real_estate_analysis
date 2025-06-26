@@ -610,13 +610,16 @@ def estimate_market_value_from_rent(lot, rent_prices_per_sqm):
 def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offers: List[Offer]):
     """
     Рассчитывает метрики для лота на основе отфильтрованных объявлений.
+    
+    Логика:
+    - Капитализация рассчитывается ТОЛЬКО на основе объявлений о продаже
+    - Доходность и ГАП рассчитываются ТОЛЬКО на основе объявлений об аренде
     """
     def is_valid_offer(offer):
         if offer.area <= 0 or offer.price <= 0:
             return False
             
         # Проверяем ограничения по площади для офисов
-        # Определяем тип недвижимости по адресу/описанию
         address_lower = offer.address.lower()
         
         # Признаки офисных помещений
@@ -634,9 +637,10 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
                 return False
                 
         return True
+
     # Фильтруем предложения по валидности
-    valid_sale_offers = [o for o in all_sale_offers if o.area > 0 and o.price > 0]
-    valid_rent_offers = [o for o in all_rent_offers if o.area > 0 and o.price > 0]
+    valid_sale_offers = [o for o in all_sale_offers if is_valid_offer(o)]
+    valid_rent_offers = [o for o in all_rent_offers if is_valid_offer(o)]
     
     # Базовые параметры
     purchase_price = lot.price
@@ -654,8 +658,9 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
     lot.annual_yield_percent = 0
     lot.annual_income = 0
     lot.average_rent_price_per_sqm = 0
+    lot.market_value_method = "unknown"
     
-    # 1. Рассчитываем рыночную цену на основе объявлений о продаже
+    # 1. Рассчитываем рыночную цену и капитализацию ТОЛЬКО на основе объявлений о продаже
     if valid_sale_offers:
         prices_per_sqm = [offer.price / offer.area for offer in valid_sale_offers]
         
@@ -674,25 +679,7 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
             
             lot.market_value_method = "sales"
     
-    # 2. Если нет данных о продаже, но есть аренда - используем метод капитализации
-    elif valid_rent_offers:
-        rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
-        
-        if rent_prices_per_sqm:
-            # Используем ставку капитализации 9% для коммерческой недвижимости
-            cap_rate = 0.09
-            median_rent = statistics.median(rent_prices_per_sqm)
-            annual_rent_income = median_rent * 12 * lot.area * (1 - expense_ratio)
-            
-            # Оценка рыночной стоимости методом капитализации
-            lot.market_value = annual_rent_income / cap_rate
-            lot.market_price_per_sqm = lot.market_value / lot.area if lot.area > 0 else 0
-            lot.capitalization_rub = lot.market_value - lot.price
-            lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
-            
-            lot.market_value_method = "capitalization"
-    
-    # 3. Рассчитываем доходность на основе объявлений аренды
+    # 2. Рассчитываем доходность и ГАП ТОЛЬКО на основе объявлений об аренде
     if valid_rent_offers:
         rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
         
@@ -700,14 +687,11 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
             # Медианная цена аренды за кв.м в месяц
             lot.average_rent_price_per_sqm = statistics.median(rent_prices_per_sqm)
             
-            # Валовый месячный доход
-            gross_monthly_income = lot.average_rent_price_per_sqm * lot.area
+            # ГАП = медиана по аренде за кв м * площадь
+            lot.monthly_gap = lot.average_rent_price_per_sqm * lot.area
             
             # Чистый месячный доход (после расходов)
-            net_monthly_income = gross_monthly_income * (1 - expense_ratio)
-            
-            # ГАП = валовый месячный доход
-            lot.monthly_gap = gross_monthly_income
+            net_monthly_income = lot.monthly_gap * (1 - expense_ratio)
             
             # Годовой чистый доход
             lot.annual_income = net_monthly_income * months_rented_per_year
@@ -715,19 +699,19 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
             # Доходность от аренды
             lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
     
-    # 4. Пороговые значения и плюсы
+    # 3. Пороговые значения и плюсы
     RENTAL_YIELD_THRESHOLD = 8.0  # 8% годовых
-    CAPITALIZATION_THRESHOLD = 15.0  # 15% капитализации (было занижено)
+    CAPITALIZATION_THRESHOLD = 15.0  # 15% капитализации
     
     # Расчет плюсов
     rental_plus = lot.annual_yield_percent >= RENTAL_YIELD_THRESHOLD
-    capitalization_plus = lot.capitalization_percent > 0 and lot.capitalization_percent >= CAPITALIZATION_THRESHOLD
+    capitalization_plus = lot.capitalization_percent >= CAPITALIZATION_THRESHOLD
     
     lot.plus_rental = 1 if rental_plus else 0
     lot.plus_sale = 1 if capitalization_plus else 0
     lot.plus_count = lot.plus_rental + lot.plus_sale
     
-    # 5. Определение статуса
+    # 4. Определение статуса
     if lot.plus_count == 2:
         lot.status = "excellent"
     elif lot.plus_count == 1:
@@ -746,7 +730,6 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
         f"Плюсы: {lot.plus_count}/2 (аренда:{lot.plus_rental}, продажа:{lot.plus_sale}), "
         f"Статус: {lot.status}"
     )
-
 
 # Модифицируем функцию filter_offers_by_distance для использования fallback
 # Заменить функцию filter_offers_by_distance в parser/main.py
@@ -875,15 +858,15 @@ async def main():
                 logging.info(f"🔄 Возобновляем обработку с лота #{start_idx+1} из {len(lots)}")
                 logging.info(f"📊 Восстановлены данные: {len(all_sale_offers)} объявлений о продаже, {len(all_rent_offers)} объявлений об аренде")
             else:
-                # Не удалось    восстановить, начинаем с нуля
+                # Не удалось восстановить, начинаем с нуля
                 logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
-                lots = await fetch_lots(max_pages=3)
+                lots = await fetch_lots(max_pages=5)
                 processed_indices = set()
                 start_idx = 0
         else:
             # Начинаем с нуля
             logging.info("🔄 Запускаем обработку с нуля (без восстановления)")
-            lots = await fetch_lots(max_pages=3)
+            lots = await fetch_lots(max_pages=5)
             processed_indices = set()
             start_idx = 0
         
@@ -899,18 +882,8 @@ async def main():
         batch_size = 5  # Размер пакета для сохранения
         
         # Основной цикл обработки лотов, начиная с start_idx
-        seen_lots = set()  # Для отслеживания дубликатов
-        
         for i in range(start_idx, len(lots)):
             lot = lots[i]
-            
-            # --- Удаление дубликатов по адресу и площади ---
-            lot_signature = (lot.address.strip().lower(), round(lot.area, 2))
-            if lot_signature in seen_lots:
-                logging.info(f"Пропуск дубликата лота: {lot.name} ({lot.address}, {lot.area} м²)")
-                continue
-            seen_lots.add(lot_signature)
-            # --- конец блока удаления дубликатов ---
             
             # Determine if the address has sufficient components for narrowed search
             address_components = calculate_address_components(lot.address)

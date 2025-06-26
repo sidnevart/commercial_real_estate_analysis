@@ -175,21 +175,20 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
             
             if sheet_id is not None:
                 # Определяем диапазон строк для форматирования
-                # Предполагаем, что у нас есть заголовок в первой строке
                 start_row = 1  # Начинаем со второй строки (индекс 1)
                 last_row = start_row + len(rows)
                 
                 # Форматирование для капитализации в % (колонка L, индекс 11)
-                # ТОЛЬКО для строго положительных значений
+                # ТОЛЬКО для значений >= 15%
                 _format_cells(
                     sheet_id=sheet_id,
                     start_row=start_row,
                     end_row=last_row,
                     column=11,  # Колонка L (капитализация, %)
-                    condition="NUMBER_GREATER 0",  # Строго больше 0
+                    condition="NUMBER_GREATER_THAN_EQ 15",  # >= 15%
                     color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
                 )
-                logger.info("Добавлено форматирование капитализации (только положительные значения)")
+                logger.info("Добавлено форматирование капитализации (>= 15%)")
                 
                 # Форматирование для доходности (колонка N, индекс 13)
                 # Окрашиваем зеленым доходность >= 8%
@@ -209,7 +208,7 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
                     start_row=start_row,
                     end_row=last_row,
                     column=25,  # Колонка Z (плюсик за аренду)
-                    condition="NUMBER_EQ 1",  # = 1 (целое число)
+                    condition="NUMBER_EQ 1",  # = 1
                     color={"red": 0.5647, "green": 0.9333, "blue": 0.5647}  # Зеленый
                 )
                 
@@ -219,18 +218,18 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
                     start_row=start_row,
                     end_row=last_row,
                     column=26,  # Колонка AA (плюсик за продажу)
-                    condition="NUMBER_EQ 1",  # = 1 (целое число)
+                    condition="NUMBER_EQ 1",  # = 1
                     color={"red": 0.5647, "green": 0.9333, "blue": 0.5647}  # Зеленый
                 )
                 
                 # Форматирование для общего количества плюсиков (колонка AB, индекс 27)
-                # Окрашиваем по градиенту: 3 плюса - темно-зеленый, 2 - зеленый, 1 - светло-зеленый
+                # Градиент: 3 плюса - темно-зеленый, 2 - зеленый, 1 - светло-зеленый
                 _format_cells(
                     sheet_id=sheet_id,
                     start_row=start_row,
                     end_row=last_row,
                     column=27,  # Колонка AB (общее количество плюсиков)
-                    condition="NUMBER_EQ 3",  # = 3 (целое число)
+                    condition="NUMBER_EQ 3",  # = 3
                     color={"red": 0.2745, "green": 0.7412, "blue": 0.2745}  # Темно-зеленый
                 )
                 
@@ -239,7 +238,7 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
                     start_row=start_row,
                     end_row=last_row,
                     column=27,  # Колонка AB
-                    condition="NUMBER_EQ 2",  # = 2 (целое число)
+                    condition="NUMBER_EQ 2",  # = 2
                     color={"red": 0.5647, "green": 0.9333, "blue": 0.5647}  # Зеленый
                 )
                 
@@ -248,7 +247,7 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
                     start_row=start_row,
                     end_row=last_row,
                     column=27,  # Колонка AB
-                    condition="NUMBER_EQ 1",  # = 1 (целое число)
+                    condition="NUMBER_EQ 1",  # = 1
                     color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
                 )
                 
@@ -266,7 +265,7 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
         raise
 
 def _format_cells(sheet_id, start_row, end_row, column, condition, color):
-    """Apply conditional formatting to a range of cells."""
+    """Apply conditional formatting to a range of cells with improved handling."""
     # Соответствие пользовательских условий и API-констант
     condition_mapping = {
         "NUMBER_LESS_THAN_OR_EQUAL": "NUMBER_LESS_THAN_EQ",
@@ -311,11 +310,11 @@ def _format_cells(sheet_id, start_row, end_row, column, condition, color):
             # Пытаемся преобразовать в число
             num_value = float(condition_value)
             
-            # ИСПРАВЛЕНИЕ: для целых чисел убираем десятичную часть
+            # Для целых чисел убираем десятичную часть
             if num_value.is_integer():
-                formatted_value = str(int(num_value))  # "1" вместо "1.0"
+                formatted_value = str(int(num_value))  # "15" вместо "15.0"
             else:
-                formatted_value = str(num_value)  # "1.5" остается как есть
+                formatted_value = str(num_value)  # "15.5" остается как есть
                 
             rule["booleanRule"]["condition"]["values"] = [{"userEnteredValue": formatted_value}]
             logger.debug(f"Использовано числовое значение: {formatted_value}")
@@ -324,15 +323,6 @@ def _format_cells(sheet_id, start_row, end_row, column, condition, color):
             # Если не число, сохраняем как строку
             rule["booleanRule"]["condition"]["values"] = [{"userEnteredValue": condition_value}]
             logger.debug(f"Использовано строковое значение: {condition_value}")
-    
-    # Для NUMBER_GREATER 0 добавляем специальную обработку
-    if api_condition_type == "NUMBER_GREATER" and condition_value == "0":
-        # Используем CUSTOM_FORMULA для строго больше 0
-        rule["booleanRule"]["condition"] = {
-            "type": "CUSTOM_FORMULA",
-            "values": [{"userEnteredValue": f"={chr(65 + column)}{start_row + 1}>0"}]
-        }
-        logger.debug("Используется CUSTOM_FORMULA для строго больше 0")
     
     request = {"addConditionalFormatRule": {"rule": rule, "index": 0}}
     body = {"requests": [request]}
@@ -343,20 +333,224 @@ def _format_cells(sheet_id, start_row, end_row, column, condition, color):
     except Exception as e:
         logger.error(f"Ошибка при применении форматирования для колонки {column}: {e}")
         
-        # Попробуем альтернативный подход - без значения (для некоторых условий)
-        if condition_value and api_condition_type in ["NUMBER_EQ", "NUMBER_GREATER", "NUMBER_LESS"]:
+        # Попробуем альтернативный подход с CUSTOM_FORMULA
+        if condition_value and api_condition_type in ["NUMBER_GREATER_THAN_EQ", "NUMBER_EQ"]:
             try:
                 logger.info(f"Пробуем альтернативный подход для {api_condition_type}")
                 
                 # Создаем новое правило с CUSTOM_FORMULA
                 column_letter = chr(65 + column)  # A=0, B=1, etc.
                 
-                if api_condition_type == "NUMBER_GREATER":
-                    formula = f"={column_letter}{start_row + 1}>0"
+                if api_condition_type == "NUMBER_GREATER_THAN_EQ":
+                    formula = f"={column_letter}{start_row + 1}>={condition_value}"
                 elif api_condition_type == "NUMBER_EQ":
                     formula = f"={column_letter}{start_row + 1}={condition_value.split('.')[0]}"
                 else:
-                    formula = f"={column_letter}{start_row + 1}{condition_value}"
+                    formula = f"={column_letter}{start_row + 1}>{condition_value}"
+                
+                alternative_rule = {
+                    "ranges": [{
+                        "sheetId": sheet_id,
+                        "startRowIndex": start_row,
+                        "endRowIndex": end_row,
+                        "startColumnIndex": column,
+                        "endColumnIndex": column + 1
+                    }],
+                    "booleanRule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            "values": [{"userEnteredValue": formula}]
+                        },
+                        "format": {"backgroundColor": color}
+                    }
+                }
+                
+                alternative_request = {"addConditionalFormatRule": {"rule": alternative_rule, "index": 0}}
+                alternative_body = {"requests": [alternative_request]}
+                
+                _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=alternative_body).execute()
+                logger.info(f"Успешно применено альтернативное форматирование для колонки {column} с формулой: {formula}")
+                
+            except Exception as e2:
+                logger.error(f"Альтернативное форматирование также не удалось для колонки {column}: {e2}")
+
+def setup_conditional_formatting_for_lots():
+    """Настраивает условное форматирование для таблицы лотов."""
+    try:
+        sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+        sheet_id = next((sheet['properties']['sheetId'] for sheet in sheets_metadata['sheets'] 
+                      if sheet['properties']['title'] == 'lots_all'), None)
+        
+        if not sheet_id:
+            logger.warning("Лист 'lots_all' не найден для настройки форматирования")
+            return
+        
+        # Определяем столбцы (предполагая стандартный порядок)
+        capitalization_percent_col = 11  # Столбец L (капитализация %)
+        annual_yield_col = 13  # Столбец N (доходность %)
+        
+        requests = [
+            # Форматирование капитализации %: зеленый только если >= 15%
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": capitalization_percent_col,
+                            "endColumnIndex": capitalization_percent_col + 1
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "NUMBER_GREATER_THAN_EQ",
+                                "values": [{"userEnteredValue": "15"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
+                            }
+                        }
+                    },
+                    "index": 0
+                }
+            },
+            # Форматирование капитализации %: красный если < 0%
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": capitalization_percent_col,
+                            "endColumnIndex": capitalization_percent_col + 1
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "NUMBER_LESS",
+                                "values": [{"userEnteredValue": "0"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 1.0, "green": 0.8, "blue": 0.8}
+                            }
+                        }
+                    },
+                    "index": 1
+                }
+            },
+            # Форматирование доходности %: зеленый если >= 8%
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": annual_yield_col,
+                            "endColumnIndex": annual_yield_col + 1
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "NUMBER_GREATER_THAN_EQ",
+                                "values": [{"userEnteredValue": "8"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
+                            }
+                        }
+                    },
+                    "index": 2
+                }
+            }
+        ]
+        
+        body = {"requests": requests}
+        _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
+        logger.info("✅ Условное форматирование настроено для таблицы лотов")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при настройке условного форматирования: {e}")
+
+def _format_cells(sheet_id, start_row, end_row, column, condition, color):
+    """Apply conditional formatting to a range of cells with improved handling."""
+    # Соответствие пользовательских условий и API-констант
+    condition_mapping = {
+        "NUMBER_LESS_THAN_OR_EQUAL": "NUMBER_LESS_THAN_EQ",
+        "NUMBER_GREATER_THAN_OR_EQUAL": "NUMBER_GREATER_THAN_EQ",
+        "NUMBER_LESS": "NUMBER_LESS",
+        "NUMBER_GREATER": "NUMBER_GREATER",
+        "NUMBER_EQUAL": "NUMBER_EQ",
+        "NUMBER_EQ": "NUMBER_EQ",
+        "NUMBER_GREATER_THAN_EQ": "NUMBER_GREATER_THAN_EQ"
+    }
+    
+    # Парсим условие и значение из строки
+    parts = condition.split(' ', 1)
+    condition_type = parts[0]
+    condition_value = parts[1] if len(parts) > 1 else None
+    
+    # Проверяем, нужно ли преобразовать условие в API-совместимый формат
+    if condition_type in condition_mapping:
+        api_condition_type = condition_mapping[condition_type]
+    else:
+        api_condition_type = condition_type
+    
+    logger.info(f"Применяем форматирование: {condition_type} -> {api_condition_type} со значением {condition_value}")
+    
+    rule = {
+        "ranges": [{
+            "sheetId": sheet_id,
+            "startRowIndex": start_row,
+            "endRowIndex": end_row,
+            "startColumnIndex": column,
+            "endColumnIndex": column + 1
+        }],
+        "booleanRule": {
+            "condition": {"type": api_condition_type},
+            "format": {"backgroundColor": color}
+        }
+    }
+    
+    # Добавляем значение только если оно есть
+    if condition_value:
+        try:
+            # Пытаемся преобразовать в число
+            num_value = float(condition_value)
+            
+            # Для целых чисел убираем десятичную часть
+            if num_value.is_integer():
+                formatted_value = str(int(num_value))  # "15" вместо "15.0"
+            else:
+                formatted_value = str(num_value)  # "15.5" остается как есть
+                
+            rule["booleanRule"]["condition"]["values"] = [{"userEnteredValue": formatted_value}]
+            logger.debug(f"Использовано числовое значение: {formatted_value}")
+            
+        except ValueError:
+            # Если не число, сохраняем как строку
+            rule["booleanRule"]["condition"]["values"] = [{"userEnteredValue": condition_value}]
+            logger.debug(f"Использовано строковое значение: {condition_value}")
+    
+    request = {"addConditionalFormatRule": {"rule": rule, "index": 0}}
+    body = {"requests": [request]}
+    
+    try:
+        _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
+        logger.debug(f"Успешно применено форматирование для колонки {column}")
+    except Exception as e:
+        logger.error(f"Ошибка при применении форматирования для колонки {column}: {e}")
+        
+        # Попробуем альтернативный подход с CUSTOM_FORMULA
+        if condition_value and api_condition_type in ["NUMBER_GREATER_THAN_EQ", "NUMBER_EQ"]:
+            try:
+                logger.info(f"Пробуем альтернативный подход для {api_condition_type}")
+                
+                # Создаем новое правило с CUSTOM_FORMULA
+                column_letter = chr(65 + column)  # A=0, B=1, etc.
+                
+                if api_condition_type == "NUMBER_GREATER_THAN_EQ":
+                    formula = f"={column_letter}{start_row + 1}>={condition_value}"
+                elif api_condition_type == "NUMBER_EQ":
+                    formula = f"={column_letter}{start_row + 1}={condition_value.split('.')[0]}"
+                else:
+                    formula = f"={column_letter}{start_row + 1}>{condition_value}"
                 
                 alternative_rule = {
                     "ranges": [{
