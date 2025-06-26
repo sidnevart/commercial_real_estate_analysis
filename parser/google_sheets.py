@@ -111,192 +111,278 @@ def push_lots(lots: List[Lot], sheet_name: str = "lots_all"):
     logger.info(f"Начинаем выгрузку {len(lots)} лотов в Google Sheets на лист {sheet_name}")
     
     if not lots:
-        logger.warning("Пустой список лотов, нечего выгружать")
+        logger.warning("Список лотов пуст, выгрузка не выполнена")
         return
     
     try:
-        # Проверка существования листа
-        sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
-        sheet_exists = any(sheet['properties']['title'] == sheet_name for sheet in sheets_metadata['sheets'])
-        
-        # Заголовки таблицы
-        headers = [
-            "№", "Название", "Адрес", "Район", "Категория", "Площадь, м²", 
-            "Текущая ставка, ₽/м²", "Рыночная ставка, ₽/м²", "Общая стоимость (торги), ₽", 
-            "Общая стоимость (рыночная), ₽", "Капитализация, ₽", "Капитализация, %",
-            "ГАП (рыночный), ₽/мес", "Доходность (рыночная), %", "Аукцион", "Документ", 
-            "URL аукциона", "UUID (technical)", "Категория размера", "Наличие подвала", "Верхний этаж"
-        ]
-        
-        if not sheet_exists:
-            # Если лист не существует, создаем его и добавляем заголовки
-            logger.info(f"Лист '{sheet_name}' не найден. Создаем новый лист.")
-            body = {
-                'requests': [{
-                    'addSheet': {
-                        'properties': {
-                            'title': sheet_name,
-                            'gridProperties': {
-                                'frozenRowCount': 1
-                            }
-                        }
-                    }
-                }]
-            }
-            _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
-            _append(sheet_name, [headers])
-        
-        # Запрашиваем существующие данные для проверки на дубликаты
-        existing_data = _svc.spreadsheets().values().get(
-            spreadsheetId=GSHEET_ID,
-            range=f"{sheet_name}!R2:R10000"  # Колонка с UUID 
-        ).execute()
-        
-        existing_uuids = set()
-        if 'values' in existing_data:
-            for row in existing_data.get('values', []):
-                if row and row[0]:
-                    existing_uuids.add(str(row[0]))
-                    
-        # Фильтруем лоты, оставляя только новые
-        new_lots = [lot for lot in lots if str(lot.uuid) not in existing_uuids]
-        
-        if not new_lots:
-            logger.info("Все лоты уже существуют в таблице, добавление не требуется")
-            return
-        
-        logger.info(f"Добавление {len(new_lots)} новых лотов из {len(lots)} предоставленных")
-        
-        # Получаем текущий размер таблицы для определения номеров строк
-        range_data = _svc.spreadsheets().values().get(
-            spreadsheetId=GSHEET_ID,
-            range=f"{sheet_name}!A:A"
-        ).execute()
-        
-        next_row_number = len(range_data.get('values', [])) + 1 if 'values' in range_data else 2
-        
-        # Подготавливаем данные лотов
+        # Конвертируем лоты в строки для таблицы
         rows = []
-        for i, lot in enumerate(new_lots, start=1):
-            try:
-                # Извлекаем классификационные данные
-                category = ""
-                size_category = ""
-                has_basement = "Нет"
-                is_top_floor = "Нет"
-                
-                if hasattr(lot, 'classification') and lot.classification is not None:
-                    category = lot.classification.category
-                    size_category = lot.classification.size_category
-                    has_basement = "Да" if lot.classification.has_basement else "Нет"
-                    is_top_floor = "Да" if lot.classification.is_top_floor else "Нет"
-                
-                # Подготовка данных для текущего лота
-                row = [
-                    next_row_number + i - 1,  # № с учетом смещения
-                    lot.name,  # Название
-                    lot.address,  # Адрес
-                    lot.district,  # Район
-                    category,  # Категория
-                    lot.area,  # Площадь, м²
-                    round(lot.price / lot.area if lot.area > 0 else 0),  # Текущая ставка, ₽/м²
-                    round(getattr(lot, 'market_price_per_sqm', 0)),  # Рыночная ставка, ₽/м²
-                    lot.price,  # Общая стоимость (торги), ₽
-                    round(getattr(lot, 'market_value', 0)),  # Общая стоимость (рыночная), ₽
-                    round(getattr(lot, 'capitalization_rub', 0)),  # Капитализация, ₽
-                    round(getattr(lot, 'capitalization_percent', 0), 1),  # Капитализация, %
-                    round(getattr(lot, 'monthly_gap', 0)),  # ГАП (рыночный), ₽/мес
-                    round(getattr(lot, 'annual_yield_percent', 0), 1),  # Доходность (рыночная), %
-                    lot.auction_type,  # Аукцион
-                    lot.notice_number,  # Документ
-                    lot.auction_url,  # URL аукциона
-                    str(lot.uuid),  # UUID (technical)
-                    size_category,  # Категория размера
-                    has_basement,  # Наличие подвала
-                    is_top_floor,  # Верхний этаж
-                    getattr(lot, 'sale_offers_count', 0),  # Найдено предложений о продаже
-                    getattr(lot, 'rent_offers_count', 0),
-                    getattr(lot, 'filtered_sale_offers_count', 0),
-                    getattr(lot, 'filtered_rent_offers_count', 0),
-                    getattr(lot, 'plus_rental', 0),
-                    getattr(lot, 'plus_sale', 0),
-                    getattr(lot, 'plus_count', 0),
-                    getattr(lot, 'status', 'unknown'), # Найдено предложений об аренде
-                ]
-                rows.append(row)
-            except Exception as e:
-                logger.error(f"Ошибка при подготовке данных лота {getattr(lot, 'id', 'unknown')}: {e}")
+        seen_lots = set()
+        for i, lot in enumerate(lots, 1):
+            classification = getattr(lot, 'classification', None)
+            lot_signature = (lot.address.strip().lower(), round(lot.area, 2))
+            if lot_signature in seen_lots:
+                logging.info(f"Пропуск дубликата лота: {lot.name} ({lot.address}, {lot.area} м²)")
+                continue
+            seen_lots.add(lot_signature)
+            row = [
+                i,  # Порядковый номер
+                lot.name,
+                lot.address,
+                getattr(lot, 'district', 'Неизвестно'),
+                lot.property_category,
+                lot.area,
+                getattr(lot, 'current_price_per_sqm', 0),
+                getattr(lot, 'market_price_per_sqm', 0),
+                lot.price,
+                getattr(lot, 'market_value', 0),
+                getattr(lot, 'capitalization_rub', 0),
+                getattr(lot, 'capitalization_percent', 0),
+                getattr(lot, 'monthly_gap', 0),
+                getattr(lot, 'annual_yield_percent', 0),
+                lot.auction_type,
+                lot.notice_number,
+                lot.auction_url,
+                str(lot.uuid),
+                getattr(classification, 'size_category', '') if classification else '',
+                'Да' if (classification and classification.has_basement) else 'Нет',
+                'Да' if (classification and classification.is_top_floor) else 'Нет',
+                getattr(lot, 'sale_offers_count', 0),
+                getattr(lot, 'rent_offers_count', 0),
+                getattr(lot, 'filtered_sale_offers_count', 0),
+                getattr(lot, 'filtered_rent_offers_count', 0),
+                getattr(lot, 'plus_rental', 0),  # Плюсик за аренду (1 или 0)
+                getattr(lot, 'plus_sale', 0),    # Плюсик за продажу (1 или 0)
+                getattr(lot, 'plus_count', 0),   # Общее количество плюсиков
+                getattr(lot, 'status', 'unknown')  # Статус лота
+            ]
+            rows.append(row)
         
-        # Добавляем новые данные в конец таблицы
-        if rows:
-            _append(sheet_name, rows)
-            logger.info(f"Добавлено {len(rows)} лотов в лист {sheet_name}")
+        # Отправляем данные в Google Sheets
+        _append(sheet_name, rows)
+        logger.info(f"Успешно добавлено {len(rows)} лотов в таблицу {sheet_name}")
         
-        # Форматирование таблицы (необязательно, но полезно)
+        # Применяем условное форматирование после добавления данных
         try:
-            # Получаем ID листа
-            sheet_id = next((sheet['properties']['sheetId'] for sheet in sheets_metadata['sheets'] 
-                          if sheet['properties']['title'] == sheet_name), None)
+            # Получаем информацию о листе для форматирования
+            sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+            sheet_id = None
             
-            if sheet_id:
-                # Автоподбор ширины колонок
-                auto_resize_request = {
-                    "requests": [{
-                        "autoResizeDimensions": {
-                            "dimensions": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 0,
-                                "endIndex": len(headers)
-                            }
-                        }
-                    }]
-                }
-                _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=auto_resize_request).execute()
-                logger.info("Применен автоподбор ширины колонок")
+            for sheet in sheets_metadata['sheets']:
+                if sheet['properties']['title'] == sheet_name:
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is not None:
+                # Определяем диапазон строк для форматирования
+                # Предполагаем, что у нас есть заголовок в первой строке
+                start_row = 1  # Начинаем со второй строки (индекс 1)
+                last_row = start_row + len(rows)
                 
-                # Добавляем форматирование для доходности
-                yield_threshold = CONFIG.get("market_yield_threshold", 10)
-                last_row = next_row_number + len(rows) - 1
+                # Форматирование для капитализации в % (колонка L, индекс 11)
+                # ТОЛЬКО для строго положительных значений
                 _format_cells(
                     sheet_id=sheet_id,
-                    start_row=1,  # С первой строки данных (после заголовков)
-                    end_row=last_row + 1,  # До последней добавленной строки
-                    column=13,  # Колонка "Доходность (рыночная), %"
-                    condition=f"NUMBER_GREATER {yield_threshold}",
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=11,  # Колонка L (капитализация, %)
+                    condition="NUMBER_GREATER 0",  # Строго больше 0
                     color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
                 )
-                logger.info("Добавлено форматирование доходности")
+                logger.info("Добавлено форматирование капитализации (только положительные значения)")
                 
-        
-                
-                # Форматирование для капитализации (колонка L)
+                # Форматирование для доходности (колонка N, индекс 13)
+                # Окрашиваем зеленым доходность >= 8%
                 _format_cells(
                     sheet_id=sheet_id,
-                    start_row=1,
-                    end_row=last_row + 1,
-                    column=11,  # Колонка L (капитализация, %)
-                    condition="NUMBER_GREATER_THAN_OR_EQUAL 1",
-                    color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=13,  # Колонка N (доходность, %)
+                    condition="NUMBER_GREATER_THAN_EQ 8",  # >= 8%
+                    color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
                 )
-
-
+                logger.info("Добавлено форматирование доходности (>= 8%)")
+                
+                # Форматирование для плюсиков за аренду (колонка Z, индекс 25)
                 _format_cells(
                     sheet_id=sheet_id,
-                    start_row=1,
-                    end_row=last_row + 1,
-                    column=11,  # Column L (index 11)
-                    condition="NUMBER_GREATER 0",  # Changed from NUMBER_GREATER_THAN_OR_EQUAL 1 to NUMBER_GREATER 0
-                    color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Green color
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=25,  # Колонка Z (плюсик за аренду)
+                    condition="NUMBER_EQ 1",  # = 1 (целое число)
+                    color={"red": 0.5647, "green": 0.9333, "blue": 0.5647}  # Зеленый
                 )
                 
-                logging.info("Добавлено форматирование для доходности и капитализации")
+                # Форматирование для плюсиков за продажу (колонка AA, индекс 26)
+                _format_cells(
+                    sheet_id=sheet_id,
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=26,  # Колонка AA (плюсик за продажу)
+                    condition="NUMBER_EQ 1",  # = 1 (целое число)
+                    color={"red": 0.5647, "green": 0.9333, "blue": 0.5647}  # Зеленый
+                )
+                
+                # Форматирование для общего количества плюсиков (колонка AB, индекс 27)
+                # Окрашиваем по градиенту: 3 плюса - темно-зеленый, 2 - зеленый, 1 - светло-зеленый
+                _format_cells(
+                    sheet_id=sheet_id,
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=27,  # Колонка AB (общее количество плюсиков)
+                    condition="NUMBER_EQ 3",  # = 3 (целое число)
+                    color={"red": 0.2745, "green": 0.7412, "blue": 0.2745}  # Темно-зеленый
+                )
+                
+                _format_cells(
+                    sheet_id=sheet_id,
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=27,  # Колонка AB
+                    condition="NUMBER_EQ 2",  # = 2 (целое число)
+                    color={"red": 0.5647, "green": 0.9333, "blue": 0.5647}  # Зеленый
+                )
+                
+                _format_cells(
+                    sheet_id=sheet_id,
+                    start_row=start_row,
+                    end_row=last_row,
+                    column=27,  # Колонка AB
+                    condition="NUMBER_EQ 1",  # = 1 (целое число)
+                    color={"red": 0.7176, "green": 0.8823, "blue": 0.7176}  # Светло-зеленый
+                )
+                
+                logger.info("Добавлено форматирование плюсиков")
+                
+            else:
+                logger.warning(f"Не удалось найти лист {sheet_name} для форматирования")
+                
         except Exception as e:
-            logger.error(f"Ошибка при применении форматирования таблицы: {e}")
-    
+            logger.error(f"Ошибка при применении форматирования: {e}")
+            # Не прерываем выполнение из-за ошибок форматирования
+        
     except Exception as e:
-        logger.error(f"Общая ошибка при добавлении лотов в Google Sheets: {e}", exc_info=True)
+        logger.error(f"Ошибка при выгрузке лотов в Google Sheets: {e}")
+        raise
 
+def _format_cells(sheet_id, start_row, end_row, column, condition, color):
+    """Apply conditional formatting to a range of cells."""
+    # Соответствие пользовательских условий и API-констант
+    condition_mapping = {
+        "NUMBER_LESS_THAN_OR_EQUAL": "NUMBER_LESS_THAN_EQ",
+        "NUMBER_GREATER_THAN_OR_EQUAL": "NUMBER_GREATER_THAN_EQ",
+        "NUMBER_LESS": "NUMBER_LESS",
+        "NUMBER_GREATER": "NUMBER_GREATER",
+        "NUMBER_EQUAL": "NUMBER_EQ",
+        "NUMBER_EQ": "NUMBER_EQ",
+        "NUMBER_GREATER_THAN_EQ": "NUMBER_GREATER_THAN_EQ"
+    }
+    
+    # Парсим условие и значение из строки
+    parts = condition.split(' ', 1)
+    condition_type = parts[0]
+    condition_value = parts[1] if len(parts) > 1 else None
+    
+    # Проверяем, нужно ли преобразовать условие в API-совместимый формат
+    if condition_type in condition_mapping:
+        api_condition_type = condition_mapping[condition_type]
+    else:
+        api_condition_type = condition_type
+    
+    logger.info(f"Применяем форматирование: {condition_type} -> {api_condition_type} со значением {condition_value}")
+    
+    rule = {
+        "ranges": [{
+            "sheetId": sheet_id,
+            "startRowIndex": start_row,
+            "endRowIndex": end_row,
+            "startColumnIndex": column,
+            "endColumnIndex": column + 1
+        }],
+        "booleanRule": {
+            "condition": {"type": api_condition_type},
+            "format": {"backgroundColor": color}
+        }
+    }
+    
+    # Добавляем значение только если оно есть
+    if condition_value:
+        try:
+            # Пытаемся преобразовать в число
+            num_value = float(condition_value)
+            
+            # ИСПРАВЛЕНИЕ: для целых чисел убираем десятичную часть
+            if num_value.is_integer():
+                formatted_value = str(int(num_value))  # "1" вместо "1.0"
+            else:
+                formatted_value = str(num_value)  # "1.5" остается как есть
+                
+            rule["booleanRule"]["condition"]["values"] = [{"userEnteredValue": formatted_value}]
+            logger.debug(f"Использовано числовое значение: {formatted_value}")
+            
+        except ValueError:
+            # Если не число, сохраняем как строку
+            rule["booleanRule"]["condition"]["values"] = [{"userEnteredValue": condition_value}]
+            logger.debug(f"Использовано строковое значение: {condition_value}")
+    
+    # Для NUMBER_GREATER 0 добавляем специальную обработку
+    if api_condition_type == "NUMBER_GREATER" and condition_value == "0":
+        # Используем CUSTOM_FORMULA для строго больше 0
+        rule["booleanRule"]["condition"] = {
+            "type": "CUSTOM_FORMULA",
+            "values": [{"userEnteredValue": f"={chr(65 + column)}{start_row + 1}>0"}]
+        }
+        logger.debug("Используется CUSTOM_FORMULA для строго больше 0")
+    
+    request = {"addConditionalFormatRule": {"rule": rule, "index": 0}}
+    body = {"requests": [request]}
+    
+    try:
+        _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
+        logger.debug(f"Успешно применено форматирование для колонки {column}")
+    except Exception as e:
+        logger.error(f"Ошибка при применении форматирования для колонки {column}: {e}")
+        
+        # Попробуем альтернативный подход - без значения (для некоторых условий)
+        if condition_value and api_condition_type in ["NUMBER_EQ", "NUMBER_GREATER", "NUMBER_LESS"]:
+            try:
+                logger.info(f"Пробуем альтернативный подход для {api_condition_type}")
+                
+                # Создаем новое правило с CUSTOM_FORMULA
+                column_letter = chr(65 + column)  # A=0, B=1, etc.
+                
+                if api_condition_type == "NUMBER_GREATER":
+                    formula = f"={column_letter}{start_row + 1}>0"
+                elif api_condition_type == "NUMBER_EQ":
+                    formula = f"={column_letter}{start_row + 1}={condition_value.split('.')[0]}"
+                else:
+                    formula = f"={column_letter}{start_row + 1}{condition_value}"
+                
+                alternative_rule = {
+                    "ranges": [{
+                        "sheetId": sheet_id,
+                        "startRowIndex": start_row,
+                        "endRowIndex": end_row,
+                        "startColumnIndex": column,
+                        "endColumnIndex": column + 1
+                    }],
+                    "booleanRule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            "values": [{"userEnteredValue": formula}]
+                        },
+                        "format": {"backgroundColor": color}
+                    }
+                }
+                
+                alternative_request = {"addConditionalFormatRule": {"rule": alternative_rule, "index": 0}}
+                alternative_body = {"requests": [alternative_request]}
+                
+                _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=alternative_body).execute()
+                logger.info(f"Успешно применено альтернативное форматирование для колонки {column} с формулой: {formula}")
+                
+            except Exception as e2:
+                logger.error(f"Альтернативное форматирование также не удалось для колонки {column}: {e2}")
 
 def push_offers(sheet_name: str, offers: List[Offer]):
     """Добавляет объявления в таблицу без перезаписи существующих данных."""
@@ -914,7 +1000,99 @@ def setup_cian_rent_all_header():
     except Exception as e:
         logger.error(f"Ошибка при настройке заголовков для {sheet_name}: {e}")
         return False
-
+def setup_conditional_formatting_for_lots():
+    """Настраивает условное форматирование для таблицы лотов."""
+    try:
+        sheets_metadata = _svc.spreadsheets().get(spreadsheetId=GSHEET_ID).execute()
+        sheet_id = next((sheet['properties']['sheetId'] for sheet in sheets_metadata['sheets'] 
+                      if sheet['properties']['title'] == 'lots_all'), None)
+        
+        if not sheet_id:
+            logging.warning("Лист 'lots_all' не найден для настройки форматирования")
+            return
+        
+        # Определяем столбцы (предполагая стандартный порядок)
+        capitalization_percent_col = 13  # Столбец N (капитализация %)
+        annual_yield_col = 15  # Столбец P (доходность %)
+        
+        requests = [
+            # Форматирование капитализации %: зеленый только если >= 15%
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": capitalization_percent_col,
+                            "endColumnIndex": capitalization_percent_col + 1
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "NUMBER_GREATER_THAN_EQ",
+                                "values": [{"userEnteredValue": "15"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
+                            }
+                        }
+                    },
+                    "index": 0
+                }
+            },
+            # Форматирование капитализации %: красный если < 0%
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": capitalization_percent_col,
+                            "endColumnIndex": capitalization_percent_col + 1
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "NUMBER_LESS",
+                                "values": [{"userEnteredValue": "0"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 1.0, "green": 0.8, "blue": 0.8}
+                            }
+                        }
+                    },
+                    "index": 1
+                }
+            },
+            # Форматирование доходности %: зеленый если >= 8%
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": annual_yield_col,
+                            "endColumnIndex": annual_yield_col + 1
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "NUMBER_GREATER_THAN_EQ",
+                                "values": [{"userEnteredValue": "8"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
+                            }
+                        }
+                    },
+                    "index": 2
+                }
+            }
+        ]
+        
+        body = {"requests": requests}
+        _svc.spreadsheets().batchUpdate(spreadsheetId=GSHEET_ID, body=body).execute()
+        logging.info("✅ Условное форматирование настроено для таблицы лотов")
+        
+    except Exception as e:
+        logging.error(f"Ошибка при настройке условного форматирования: {e}")
 
 def setup_all_headers():
     """Настраивает заголовки во всех основных таблицах."""
@@ -922,6 +1100,7 @@ def setup_all_headers():
     setup_lots_all_header()
     setup_cian_sale_all_header()
     setup_cian_rent_all_header()
+    setup_conditional_formatting_for_lots()
     logger.info("Настройка заголовков завершена")
 
 setup_all_headers()

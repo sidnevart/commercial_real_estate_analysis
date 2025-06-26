@@ -6,7 +6,7 @@ from typing import Optional
 
 from core.config import CONFIG
 from core.models import PropertyClassification, Lot
-from core.gpt_tunnel_client import chat
+from core.gpt_tunnel_client import chat, sync_chat  # Импортируем исправленную функцию
 import json
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ def _extract_json(txt: str) -> str:
     return m.group(0)
 
 async def classify_property(lot: Lot) -> PropertyClassification:
-    """Исправленная функция классификации объекта недвижимости."""
+    """Асинхронная функция классификации объекта недвижимости."""
     try:
         if not CONFIG["gpt_analysis_enabled"]:
             logger.info("GPT анализ отключен в настройках")
@@ -43,7 +43,7 @@ async def classify_property(lot: Lot) -> PropertyClassification:
         raw = await chat(
             MODEL,
             [{"role": "user", "content": prompt}],
-            max_tokens=300,  # Увеличиваем максимальное количество токенов
+            max_tokens=300,
         )
         
         # Добавим логирование ответа
@@ -92,12 +92,67 @@ async def classify_property(lot: Lot) -> PropertyClassification:
 
 def classify_property_sync(lot: Lot) -> Optional[PropertyClassification]:
     """
-    Синхронная обертка для вызова асинхронной функции.
-    Для случаев, когда нельзя использовать await.
+    Синхронная версия классификации с использованием исправленного sync_chat.
     """
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        logger.warning("Невозможно запустить асинхронный запрос в синхронном контексте с работающим циклом")
-        return None
-    else:
-        return loop.run_until_complete(classify_property(lot))
+    try:
+        if not CONFIG["gpt_analysis_enabled"]:
+            logger.info("GPT анализ отключен в настройках")
+            return PropertyClassification()
+            
+        description = f"{lot.name}\nПлощадь: {lot.area} м²\nАдрес: {lot.address}\nТип: {lot.property_category}"
+        
+        prompt = CONFIG["gpt_prompt_template"].format(
+            name=lot.name,
+            description=description,
+            area=lot.area,
+            category=lot.property_category
+        )
+        
+        logger.info(f"Отправляем синхронный запрос в GPT для лота {lot.id}")
+        
+        # Используем исправленную синхронную функцию
+        raw = sync_chat(
+            MODEL,
+            [{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+        
+        logger.info(f"Получен ответ от GPT для лота {lot.id}: {raw[:100]}...")
+        
+        # Обработка JSON аналогично асинхронной версии
+        try:
+            json_pattern = r'({[\s\S]*?})'
+            json_match = re.search(json_pattern, raw)
+            
+            if json_match:
+                classification_data = json.loads(json_match.group(1))
+            else:
+                category = re.search(r'"category":\s*"([^"]+)"', raw)
+                size = re.search(r'"size_category":\s*"([^"]+)"', raw)
+                basement = re.search(r'"has_basement":\s*(true|false)', raw)
+                top_floor = re.search(r'"is_top_floor":\s*(true|false)', raw)
+                
+                classification_data = {
+                    "category": category.group(1) if category else "",
+                    "size_category": size.group(1) if size else "",
+                    "has_basement": basement.group(1).lower() == "true" if basement else False,
+                    "is_top_floor": top_floor.group(1).lower() == "true" if top_floor else False
+                }
+        except Exception as e:
+            logger.error(f"Ошибка при извлечении JSON из ответа GPT: {e}")
+            logger.debug(f"Сырой ответ GPT: {raw}")
+            return PropertyClassification()
+        
+        classification = PropertyClassification(
+            category=classification_data.get("category", ""),
+            size_category=classification_data.get("size_category", ""),
+            has_basement=classification_data.get("has_basement", False),
+            is_top_floor=classification_data.get("is_top_floor", False)
+        )
+        
+        logger.info(f"Лот {lot.id} классифицирован как {classification.category}, размер: {classification.size_category}")
+        return classification
+        
+    except Exception as e:
+        logger.error(f"Ошибка синхронной классификации лота {lot.id}: {e}")
+        return PropertyClassification()

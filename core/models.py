@@ -72,6 +72,8 @@ class Lot:
     plus_count: int = 0
     status: str = "unknown"
 
+    
+
 @dataclass(slots=True)
 class Offer:
     id: str

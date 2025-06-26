@@ -48,8 +48,6 @@ async def chat(model: str, messages: list[dict], max_tokens: int = 500) -> str:
         logging.error(f"API connection error: {str(e)}")
         raise
 
-# Add this function to the existing file
-
 def sync_chat(model: str, messages: list[dict], max_tokens: int = 500) -> str:
     """
     Синхронная версия функции chat для вызова из синхронного кода.
@@ -57,17 +55,28 @@ def sync_chat(model: str, messages: list[dict], max_tokens: int = 500) -> str:
     messages – [{"role":"system","content":"..."}, {"role":"user","content":"..."}]
     """
     try:
-        # Create a new event loop for this synchronous context
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Run the async function and get the result
-        result = loop.run_until_complete(chat(model, messages, max_tokens))
-        
-        # Clean up
-        loop.close()
-        
-        return result
+        # Проверяем, есть ли уже запущенный event loop
+        try:
+            loop = asyncio.get_running_loop()
+            # Если есть активный loop, создаем задачу в нем
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(_run_in_new_loop, model, messages, max_tokens)
+                result = future.result(timeout=30)  # 30 секунд таймаут
+                return result
+        except RuntimeError:
+            # Нет активного loop, можем создать новый
+            return asyncio.run(chat(model, messages, max_tokens))
+            
     except Exception as e:
         logging.error(f"Ошибка при синхронном вызове GPT API: {e}")
         return "{}"  # Return empty JSON to prevent parsing errors
+
+def _run_in_new_loop(model: str, messages: list[dict], max_tokens: int = 500) -> str:
+    """Запускает async функцию в новом event loop в отдельном потоке."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(chat(model, messages, max_tokens))
+    finally:
+        loop.close()

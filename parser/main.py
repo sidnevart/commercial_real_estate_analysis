@@ -610,154 +610,143 @@ def estimate_market_value_from_rent(lot, rent_prices_per_sqm):
 def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offers: List[Offer]):
     """
     Рассчитывает метрики для лота на основе отфильтрованных объявлений.
-    Комбинирует метод капитализации и оценку доходности от аренды.
     """
+    def is_valid_offer(offer):
+        if offer.area <= 0 or offer.price <= 0:
+            return False
+            
+        # Проверяем ограничения по площади для офисов
+        # Определяем тип недвижимости по адресу/описанию
+        address_lower = offer.address.lower()
+        
+        # Признаки офисных помещений
+        office_indicators = [
+            'офис', 'бизнес-центр', 'бц', 'административное здание',
+            'административное помещение', 'офисное здание', 'офисное помещение'
+        ]
+        
+        is_likely_office = any(indicator in address_lower for indicator in office_indicators)
+        
+        # Если это офис, применяем ограничения по площади
+        if is_likely_office:
+            if offer.area < 1000 or offer.area > 3000:
+                logging.info(f"Фильтрация офиса: площадь {offer.area} м² не в диапазоне 1000-3000 м²")
+                return False
+                
+        return True
     # Фильтруем предложения по валидности
     valid_sale_offers = [o for o in all_sale_offers if o.area > 0 and o.price > 0]
     valid_rent_offers = [o for o in all_rent_offers if o.area > 0 and o.price > 0]
     
-    # Сохраняем флаг метода оценки
-    lot.market_value_method = "unknown"
+    # Базовые параметры
+    purchase_price = lot.price
+    holding_years = 5
+    months_rented_per_year = 11  # 11 месяцев аренды в году
+    expense_ratio = 0.1  # 10% расходов от валового дохода
     
-    # 1. Определяем базовые параметры для расчетов
-    purchase_price = lot.price  # Цена лота (покупки)
-    holding_years = 5  # Предполагаемый срок владения (5 лет)
-    months_rented_per_year = 11  # Предполагаем 11 месяцев аренды в году
+    # Инициализация значений по умолчанию
+    lot.market_price_per_sqm = 0
+    lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
+    lot.market_value = 0
+    lot.capitalization_rub = 0
+    lot.capitalization_percent = 0
+    lot.monthly_gap = 0
+    lot.annual_yield_percent = 0
+    lot.annual_income = 0
+    lot.average_rent_price_per_sqm = 0
     
-    # 2. Рассчитываем рыночную цену на основе объявлений о продаже
+    # 1. Рассчитываем рыночную цену на основе объявлений о продаже
     if valid_sale_offers:
-        # Получаем цены за квадратный метр
         prices_per_sqm = [offer.price / offer.area for offer in valid_sale_offers]
         
         if prices_per_sqm:
-            # Сохраняем данные о ценах продажи для аналитики
-            lot.sale_data = prices_per_sqm
-            
             # Медианная рыночная цена за квадратный метр
             lot.market_price_per_sqm = statistics.median(prices_per_sqm)
             
-            # Текущая аукционная цена за квадратный метр
-            lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
-            
-            # Общая рыночная стоимость (это будет current_price в формуле)
+            # Общая рыночная стоимость
             lot.market_value = lot.market_price_per_sqm * lot.area
             
-            # Капитализация в рублях (прирост стоимости)
+            # Капитализация в рублях
             lot.capitalization_rub = lot.market_value - lot.price
             
             # Капитализация в процентах
             lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
             
-            # Отмечаем метод оценки
             lot.market_value_method = "sales"
     
-    # 3. Если данных о продаже нет, но есть данные об аренде - используем метод капитализации
+    # 2. Если нет данных о продаже, но есть аренда - используем метод капитализации
     elif valid_rent_offers:
-        # Получаем цены аренды за квадратный метр
         rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
         
         if rent_prices_per_sqm:
-            # Оцениваем рыночную стоимость методом капитализации
-            estimated_market_value, estimated_price_per_sqm = estimate_market_value_from_rent(lot, rent_prices_per_sqm)
+            # Используем ставку капитализации 9% для коммерческой недвижимости
+            cap_rate = 0.09
+            median_rent = statistics.median(rent_prices_per_sqm)
+            annual_rent_income = median_rent * 12 * lot.area * (1 - expense_ratio)
             
-            # Заполняем метрики лота
-            lot.market_price_per_sqm = estimated_price_per_sqm
-            lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
-            lot.market_value = estimated_market_value
+            # Оценка рыночной стоимости методом капитализации
+            lot.market_value = annual_rent_income / cap_rate
+            lot.market_price_per_sqm = lot.market_value / lot.area if lot.area > 0 else 0
             lot.capitalization_rub = lot.market_value - lot.price
             lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
             
-            # Отмечаем метод оценки
             lot.market_value_method = "capitalization"
-            logging.info(f"Лот {lot.id}: Рыночная стоимость оценена методом капитализации: {lot.market_value:,.0f} ₽")
-    else:
-        # Инициализация со значениями по умолчанию, если нет данных
-        lot.market_price_per_sqm = 0
-        lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
-        lot.market_value = 0
-        lot.capitalization_rub = 0
-        lot.capitalization_percent = 0
-        lot.market_value_method = "none"
     
-    # 4. Рассчитываем доходность на основе объявлений аренды
+    # 3. Рассчитываем доходность на основе объявлений аренды
     if valid_rent_offers:
         rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
         
         if rent_prices_per_sqm:
-            # Сохраняем данные об аренде для аналитики
-            lot.rent_data = rent_prices_per_sqm
-            
             # Медианная цена аренды за кв.м в месяц
             lot.average_rent_price_per_sqm = statistics.median(rent_prices_per_sqm)
             
-            # Месячный арендный доход (ГАП / 12)
-            lot.monthly_gap = lot.average_rent_price_per_sqm * lot.area
+            # Валовый месячный доход
+            gross_monthly_income = lot.average_rent_price_per_sqm * lot.area
             
-            # Расходы ≈ 10% от арендного дохода (предположение)
-            monthly_expenses = lot.monthly_gap * 0.10
+            # Чистый месячный доход (после расходов)
+            net_monthly_income = gross_monthly_income * (1 - expense_ratio)
             
-            # Чистый месячный доход
-            monthly_net_income = lot.monthly_gap - monthly_expenses
+            # ГАП = валовый месячный доход
+            lot.monthly_gap = gross_monthly_income
             
-            # Годовой чистый доход (годовой арендный доход)
-            lot.annual_income = monthly_net_income * months_rented_per_year
+            # Годовой чистый доход
+            lot.annual_income = net_monthly_income * months_rented_per_year
             
-            # Доходность от аренды (rental_yield)
+            # Доходность от аренды
             lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
-            
-            # Отмечаем наличие арендных данных
-            lot.has_rent_data = True
-    else:
-        # Если нет данных об аренде, используем рыночное значение для приблизительного расчета
-        lot.has_rent_data = False
-        
-        # Примерно 0.6% от рыночной стоимости в месяц (с учетом расходов)
-        lot.monthly_gap = lot.market_value * 0.006
-        
-        # Годовой доход (≈ 7% годовых от рыночной стоимости)
-        lot.annual_income = lot.monthly_gap * months_rented_per_year
-        
-        # Доходность от аренды
-        lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
-        
-        lot.average_rent_price_per_sqm = 0
     
-    # 5. Рассчитываем общую доходность (аренда + капитализация)
-    total_profit = lot.annual_income * holding_years + lot.capitalization_rub
-    total_yield_per_year = (total_profit / lot.price) * 100 / holding_years if lot.price > 0 else 0
+    # 4. Пороговые значения и плюсы
+    RENTAL_YIELD_THRESHOLD = 8.0  # 8% годовых
+    CAPITALIZATION_THRESHOLD = 15.0  # 15% капитализации (было занижено)
     
-    # 6. Оценка плюсов
-    rental_plus = lot.annual_yield_percent >= 7  # Хорошая аренда — от 7%
-    capitalization_plus = lot.capitalization_percent >= 15  # Рост от 15% — это плюс
-    total_plus = total_yield_per_year >= 10  # Общая доходность выше 10% — плюс
+    # Расчет плюсов
+    rental_plus = lot.annual_yield_percent >= RENTAL_YIELD_THRESHOLD
+    capitalization_plus = lot.capitalization_percent > 0 and lot.capitalization_percent >= CAPITALIZATION_THRESHOLD
     
-    # 7. Сохраняем показатели плюсов
     lot.plus_rental = 1 if rental_plus else 0
     lot.plus_sale = 1 if capitalization_plus else 0
-    lot.plus_count = sum([rental_plus, capitalization_plus, total_plus])
+    lot.plus_count = lot.plus_rental + lot.plus_sale
     
-    # Определяем статус лота на основе количества плюсов
-    if lot.plus_count >= 3:
-        lot.status = "excellent"  # Отличный лот (все плюсы)
-    elif lot.plus_count >= 2:
-        lot.status = "good"  # Хороший лот (2 из 3 плюсов)
-    elif lot.plus_count >= 1:
-        lot.status = "fair"  # Удовлетворительный лот (1 плюс)
+    # 5. Определение статуса
+    if lot.plus_count == 2:
+        lot.status = "excellent"
+    elif lot.plus_count == 1:
+        lot.status = "good"
+    elif lot.capitalization_percent > 0 or lot.annual_yield_percent > 5:
+        lot.status = "acceptable"
     else:
-        lot.status = "poor"  # Слабый лот (нет плюсов)
+        lot.status = "poor"
     
-    # Добавим итоговое логирование для удобства отслеживания
+    # Логирование результатов
     logging.info(
-        f"Лот {lot.id}: Метрики рассчитаны - "
-        f"Рыночная цена: {lot.market_price_per_sqm:.0f} ₽/м², "
+        f"Лот {lot.id}: Рыночная цена: {lot.market_price_per_sqm:,.0f} ₽/м², "
         f"Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent:.1f}%), "
         f"ГАП: {lot.monthly_gap:,.0f} ₽/мес, "
         f"Доходность: {lot.annual_yield_percent:.1f}%, "
-        f"Общая доходность: {total_yield_per_year:.1f}%, "
-        f"Плюсы: {lot.plus_count}/3, "
-        f"Статус: {lot.status}, "
-        f"Метод оценки: {lot.market_value_method}"
+        f"Плюсы: {lot.plus_count}/2 (аренда:{lot.plus_rental}, продажа:{lot.plus_sale}), "
+        f"Статус: {lot.status}"
     )
+
 
 # Модифицируем функцию filter_offers_by_distance для использования fallback
 # Заменить функцию filter_offers_by_distance в parser/main.py
@@ -886,7 +875,7 @@ async def main():
                 logging.info(f"🔄 Возобновляем обработку с лота #{start_idx+1} из {len(lots)}")
                 logging.info(f"📊 Восстановлены данные: {len(all_sale_offers)} объявлений о продаже, {len(all_rent_offers)} объявлений об аренде")
             else:
-                # Не удалось восстановить, начинаем с нуля
+                # Не удалось    восстановить, начинаем с нуля
                 logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
                 lots = await fetch_lots(max_pages=3)
                 processed_indices = set()
@@ -910,8 +899,18 @@ async def main():
         batch_size = 5  # Размер пакета для сохранения
         
         # Основной цикл обработки лотов, начиная с start_idx
+        seen_lots = set()  # Для отслеживания дубликатов
+        
         for i in range(start_idx, len(lots)):
             lot = lots[i]
+            
+            # --- Удаление дубликатов по адресу и площади ---
+            lot_signature = (lot.address.strip().lower(), round(lot.area, 2))
+            if lot_signature in seen_lots:
+                logging.info(f"Пропуск дубликата лота: {lot.name} ({lot.address}, {lot.area} м²)")
+                continue
+            seen_lots.add(lot_signature)
+            # --- конец блока удаления дубликатов ---
             
             # Determine if the address has sufficient components for narrowed search
             address_components = calculate_address_components(lot.address)
