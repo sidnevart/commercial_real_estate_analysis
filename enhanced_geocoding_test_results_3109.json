@@ -1,0 +1,662 @@
+[
+  {
+    "lot_address": "г Москва, ул Тверская, дом 7",
+    "lot_coords": {
+      "lon": 37.61164425329014,
+      "lat": 55.75830985
+    },
+    "mock_offers_tested": 5,
+    "offers_geocoded": 5,
+    "distances": [
+      {
+        "offer_id": "mock_001",
+        "offer_address": "Москва, улица Тверская, дом 10",
+        "offer_coords": {
+          "lon": 37.5900031,
+          "lat": 55.773674
+        },
+        "distance_km": 2.1797658682781
+      },
+      {
+        "offer_id": "mock_002",
+        "offer_address": "г Москва, Красная площадь, дом 1",
+        "offer_coords": {
+          "lon": 37.6182191,
+          "lat": 55.7553617
+        },
+        "distance_km": 0.526028699436139
+      },
+      {
+        "offer_id": "mock_003",
+        "offer_address": "Москва, Пресненская набережная, дом 8",
+        "offer_coords": {
+          "lon": 37.5411041,
+          "lat": 55.7467519
+        },
+        "distance_km": 4.59747522583577
+      },
+      {
+        "offer_id": "mock_004",
+        "offer_address": "г Москва, ул Арбат, дом 15",
+        "offer_coords": {
+          "lon": 37.596885704138,
+          "lat": 55.751045500000004
+        },
+        "distance_km": 1.2269136096100286
+      },
+      {
+        "offer_id": "mock_005",
+        "offer_address": "Москва, Ленинский проспект, дом 25",
+        "offer_coords": {
+          "lon": 37.52652654919022,
+          "lat": 55.6722839
+        },
+        "distance_km": 10.951092151751654
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "г Москва, ул Тверская, дом 7",
+      "address_components": {
+        "district": "",
+        "street": "ул Тверская",
+        "settlement": "",
+        "city": "Москва",
+        "region": "",
+        "confidence": 0.9
+      },
+      "coordinates": {
+        "lon": 37.61164425329014,
+        "lat": 55.75830985
+      },
+      "geocoding_success": true,
+      "variants_tried": 6,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "Москва, Пресненская набережная, дом 12",
+    "lot_coords": {
+      "lon": 37.538982721330996,
+      "lat": 55.7477589
+    },
+    "mock_offers_tested": 5,
+    "offers_geocoded": 5,
+    "distances": [
+      {
+        "offer_id": "mock_001",
+        "offer_address": "Москва, улица Тверская, дом 10",
+        "offer_coords": {
+          "lon": 37.5900031,
+          "lat": 55.773674
+        },
+        "distance_km": 4.300330622437538
+      },
+      {
+        "offer_id": "mock_002",
+        "offer_address": "г Москва, Красная площадь, дом 1",
+        "offer_coords": {
+          "lon": 37.6182191,
+          "lat": 55.7553617
+        },
+        "distance_km": 5.030048211892203
+      },
+      {
+        "offer_id": "mock_003",
+        "offer_address": "Москва, Пресненская набережная, дом 8",
+        "offer_coords": {
+          "lon": 37.5411041,
+          "lat": 55.7467519
+        },
+        "distance_km": 0.17368135686767466
+      },
+      {
+        "offer_id": "mock_004",
+        "offer_address": "г Москва, ул Арбат, дом 15",
+        "offer_coords": {
+          "lon": 37.596885704138,
+          "lat": 55.751045500000004
+        },
+        "distance_km": 3.6420666249736624
+      },
+      {
+        "offer_id": "mock_005",
+        "offer_address": "Москва, Ленинский проспект, дом 25",
+        "offer_coords": {
+          "lon": 37.52652654919022,
+          "lat": 55.6722839
+        },
+        "distance_km": 8.42863556010081
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "Москва, Пресненская набережная, дом 12",
+      "address_components": {
+        "district": "Пресненский",
+        "street": "Пресненская набережная",
+        "settlement": "",
+        "city": "Москва",
+        "region": "Москва",
+        "confidence": 0.9
+      },
+      "coordinates": {
+        "lon": 37.538982721330996,
+        "lat": 55.7477589
+      },
+      "geocoding_success": true,
+      "variants_tried": 3,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "обл Московская, г.о. Подольск, г Подольск, ул Правды, дом 20 Московская область, г. Подольск, ул. Правды, д. 20, пом. 1",
+    "lot_coords": {
+      "lon": 37.525451007961294,
+      "lat": 55.4195828
+    },
+    "mock_offers_tested": 4,
+    "offers_geocoded": 4,
+    "distances": [
+      {
+        "offer_id": "mock_101",
+        "offer_address": "Московская область, г Подольск, ул Правды, дом 25",
+        "offer_coords": {
+          "lon": 37.55509850798452,
+          "lat": 55.4084108
+        },
+        "distance_km": 2.2461238967577635
+      },
+      {
+        "offer_id": "mock_102",
+        "offer_address": "Подольск, улица Ленина, дом 5",
+        "offer_coords": {
+          "lon": 37.523098000000005,
+          "lat": 55.36126485
+        },
+        "distance_km": 6.486362763304917
+      },
+      {
+        "offer_id": "mock_103",
+        "offer_address": "г Подольск, Комсомольская улица, дом 12",
+        "offer_coords": {
+          "lon": 37.5348611,
+          "lat": 55.4272103
+        },
+        "distance_km": 1.0353528176488662
+      },
+      {
+        "offer_id": "mock_104",
+        "offer_address": "Московская область, Подольск, ул Большая Серпуховская, дом 30",
+        "offer_coords": {
+          "lon": 37.5463182,
+          "lat": 55.42038
+        },
+        "distance_km": 1.319896441937846
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "обл Московская, г.о. Подольск, г Подольск, ул Правды, дом 20 Московская область, г. Подольск, ул. Правды, д. 20, пом. 1",
+      "address_components": {
+        "district": "",
+        "street": "Правды",
+        "settlement": "Подольск",
+        "city": "Подольск",
+        "region": "Московская область",
+        "confidence": 0.9
+      },
+      "coordinates": {
+        "lon": 37.525451007961294,
+        "lat": 55.4195828
+      },
+      "geocoding_success": true,
+      "variants_tried": 6,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "Московская область, г Подольск, ул Правды, дом 20",
+    "lot_coords": {
+      "lon": 37.562021,
+      "lat": 55.407964
+    },
+    "mock_offers_tested": 4,
+    "offers_geocoded": 4,
+    "distances": [
+      {
+        "offer_id": "mock_101",
+        "offer_address": "Московская область, г Подольск, ул Правды, дом 25",
+        "offer_coords": {
+          "lon": 37.55509850798452,
+          "lat": 55.4084108
+        },
+        "distance_km": 0.439819934285005
+      },
+      {
+        "offer_id": "mock_102",
+        "offer_address": "Подольск, улица Ленина, дом 5",
+        "offer_coords": {
+          "lon": 37.523098000000005,
+          "lat": 55.36126485
+        },
+        "distance_km": 5.745343188053731
+      },
+      {
+        "offer_id": "mock_103",
+        "offer_address": "г Подольск, Комсомольская улица, дом 12",
+        "offer_coords": {
+          "lon": 37.5348611,
+          "lat": 55.4272103
+        },
+        "distance_km": 2.74195134694194
+      },
+      {
+        "offer_id": "mock_104",
+        "offer_address": "Московская область, Подольск, ул Большая Серпуховская, дом 30",
+        "offer_coords": {
+          "lon": 37.5463182,
+          "lat": 55.42038
+        },
+        "distance_km": 1.6995308377770584
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "Московская область, г Подольск, ул Правды, дом 20",
+      "address_components": {
+        "district": "",
+        "street": "Правды",
+        "settlement": "Подольск",
+        "city": "Подольск",
+        "region": "Московская область",
+        "confidence": 0.95
+      },
+      "coordinates": {
+        "lon": 37.562021,
+        "lat": 55.407964
+      },
+      "geocoding_success": true,
+      "variants_tried": 6,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "г Москва, ВАО, Перово, ул Новогиреевская, д 42",
+    "lot_coords": {
+      "lon": 37.6305502,
+      "lat": 55.7103995
+    },
+    "mock_offers_tested": 5,
+    "offers_geocoded": 5,
+    "distances": [
+      {
+        "offer_id": "mock_001",
+        "offer_address": "Москва, улица Тверская, дом 10",
+        "offer_coords": {
+          "lon": 37.5900031,
+          "lat": 55.773674
+        },
+        "distance_km": 7.479569425254478
+      },
+      {
+        "offer_id": "mock_002",
+        "offer_address": "г Москва, Красная площадь, дом 1",
+        "offer_coords": {
+          "lon": 37.6182191,
+          "lat": 55.7553617
+        },
+        "distance_km": 5.058825793261153
+      },
+      {
+        "offer_id": "mock_003",
+        "offer_address": "Москва, Пресненская набережная, дом 8",
+        "offer_coords": {
+          "lon": 37.5411041,
+          "lat": 55.7467519
+        },
+        "distance_km": 6.9070458900845235
+      },
+      {
+        "offer_id": "mock_004",
+        "offer_address": "г Москва, ул Арбат, дом 15",
+        "offer_coords": {
+          "lon": 37.596885704138,
+          "lat": 55.751045500000004
+        },
+        "distance_km": 4.9869697992026225
+      },
+      {
+        "offer_id": "mock_005",
+        "offer_address": "Москва, Ленинский проспект, дом 25",
+        "offer_coords": {
+          "lon": 37.52652654919022,
+          "lat": 55.6722839
+        },
+        "distance_km": 7.776198129044426
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "г Москва, ВАО, Перово, ул Новогиреевская, д 42",
+      "address_components": {
+        "district": "ВАО",
+        "street": "ул Новогиреевская",
+        "settlement": "",
+        "city": "Москва",
+        "region": "",
+        "confidence": 0.95
+      },
+      "coordinates": {
+        "lon": 37.6305502,
+        "lat": 55.7103995
+      },
+      "geocoding_success": true,
+      "variants_tried": 6,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "Москва, СВАО, район Останкинский, проспект Мира, 119с536",
+    "lot_coords": {
+      "lon": 37.6339906,
+      "lat": 55.8008785
+    },
+    "mock_offers_tested": 5,
+    "offers_geocoded": 5,
+    "distances": [
+      {
+        "offer_id": "mock_001",
+        "offer_address": "Москва, улица Тверская, дом 10",
+        "offer_coords": {
+          "lon": 37.5900031,
+          "lat": 55.773674
+        },
+        "distance_km": 4.088273507384057
+      },
+      {
+        "offer_id": "mock_002",
+        "offer_address": "г Москва, Красная площадь, дом 1",
+        "offer_coords": {
+          "lon": 37.6182191,
+          "lat": 55.7553617
+        },
+        "distance_km": 5.156440737905717
+      },
+      {
+        "offer_id": "mock_003",
+        "offer_address": "Москва, Пресненская набережная, дом 8",
+        "offer_coords": {
+          "lon": 37.5411041,
+          "lat": 55.7467519
+        },
+        "distance_km": 8.364958203119183
+      },
+      {
+        "offer_id": "mock_004",
+        "offer_address": "г Москва, ул Арбат, дом 15",
+        "offer_coords": {
+          "lon": 37.596885704138,
+          "lat": 55.751045500000004
+        },
+        "distance_km": 6.007448761679758
+      },
+      {
+        "offer_id": "mock_005",
+        "offer_address": "Москва, Ленинский проспект, дом 25",
+        "offer_coords": {
+          "lon": 37.52652654919022,
+          "lat": 55.6722839
+        },
+        "distance_km": 15.802619484074041
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "Москва, СВАО, район Останкинский, проспект Мира, 119с536",
+      "address_components": {
+        "district": "Останкинский",
+        "street": "проспект Мира",
+        "settlement": "",
+        "city": "Москва",
+        "region": "СВАО",
+        "confidence": 0.9
+      },
+      "coordinates": {
+        "lon": 37.6339906,
+        "lat": 55.8008785
+      },
+      "geocoding_success": true,
+      "variants_tried": 5,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "Московская область, г Химки, ул Загородная, дом 4",
+    "lot_coords": {
+      "lon": 37.472048984971394,
+      "lat": 55.9403558
+    },
+    "mock_offers_tested": 3,
+    "offers_geocoded": 3,
+    "distances": [
+      {
+        "offer_id": "mock_201",
+        "offer_address": "Москва, улица Мясницкая, дом 20",
+        "offer_coords": {
+          "lon": 37.61203885368809,
+          "lat": 55.74435325
+        },
+        "distance_km": 23.481612143428986
+      },
+      {
+        "offer_id": "mock_202",
+        "offer_address": "Московская область, г Химки, ул Ленина, дом 10",
+        "offer_coords": {
+          "lon": 37.4729963698955,
+          "lat": 55.9114402
+        },
+        "distance_km": 3.2158096793049946
+      },
+      {
+        "offer_id": "mock_203",
+        "offer_address": "г Москва, Садовое кольцо, дом 5",
+        "offer_coords": {
+          "lon": 37.64498726923206,
+          "lat": 55.7523274
+        },
+        "distance_km": 23.530560005543105
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "Московская область, г Химки, ул Загородная, дом 4",
+      "address_components": {
+        "district": "",
+        "street": "ул Загородная",
+        "settlement": "г Химки",
+        "city": "Химки",
+        "region": "Московская область",
+        "confidence": 0.95
+      },
+      "coordinates": {
+        "lon": 37.472048984971394,
+        "lat": 55.9403558
+      },
+      "geocoding_success": true,
+      "variants_tried": 6,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "обл Московская, г Домодедово, мкр Северный, ул Советская, дом 50",
+    "lot_coords": {
+      "lon": 37.7501606273248,
+      "lat": 55.4436496
+    },
+    "mock_offers_tested": 3,
+    "offers_geocoded": 3,
+    "distances": [
+      {
+        "offer_id": "mock_201",
+        "offer_address": "Москва, улица Мясницкая, дом 20",
+        "offer_coords": {
+          "lon": 37.61203885368809,
+          "lat": 55.74435325
+        },
+        "distance_km": 34.54455855094499
+      },
+      {
+        "offer_id": "mock_202",
+        "offer_address": "Московская область, г Химки, ул Ленина, дом 10",
+        "offer_coords": {
+          "lon": 37.4729963698955,
+          "lat": 55.9114402
+        },
+        "distance_km": 54.84177638892696
+      },
+      {
+        "offer_id": "mock_203",
+        "offer_address": "г Москва, Садовое кольцо, дом 5",
+        "offer_coords": {
+          "lon": 37.64498726923206,
+          "lat": 55.7523274
+        },
+        "distance_km": 34.95360063374626
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "обл Московская, г Домодедово, мкр Северный, ул Советская, дом 50",
+      "address_components": {
+        "district": "Северный",
+        "street": "Советская",
+        "settlement": "",
+        "city": "Домодедово",
+        "region": "Московская",
+        "confidence": 0.95
+      },
+      "coordinates": {
+        "lon": 37.7501606273248,
+        "lat": 55.4436496
+      },
+      "geocoding_success": true,
+      "variants_tried": 3,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "г Москва муниципальный округ Басманный ул Покровка дом 42",
+    "lot_coords": {
+      "lon": 37.639842028604946,
+      "lat": 55.75879175
+    },
+    "mock_offers_tested": 5,
+    "offers_geocoded": 5,
+    "distances": [
+      {
+        "offer_id": "mock_001",
+        "offer_address": "Москва, улица Тверская, дом 10",
+        "offer_coords": {
+          "lon": 37.5900031,
+          "lat": 55.773674
+        },
+        "distance_km": 3.5296400833086916
+      },
+      {
+        "offer_id": "mock_002",
+        "offer_address": "г Москва, Красная площадь, дом 1",
+        "offer_coords": {
+          "lon": 37.6182191,
+          "lat": 55.7553617
+        },
+        "distance_km": 1.4056728530374676
+      },
+      {
+        "offer_id": "mock_003",
+        "offer_address": "Москва, Пресненская набережная, дом 8",
+        "offer_coords": {
+          "lon": 37.5411041,
+          "lat": 55.7467519
+        },
+        "distance_km": 6.32205978623201
+      },
+      {
+        "offer_id": "mock_004",
+        "offer_address": "г Москва, ул Арбат, дом 15",
+        "offer_coords": {
+          "lon": 37.596885704138,
+          "lat": 55.751045500000004
+        },
+        "distance_km": 2.8225501301316474
+      },
+      {
+        "offer_id": "mock_005",
+        "offer_address": "Москва, Ленинский проспект, дом 25",
+        "offer_coords": {
+          "lon": 37.52652654919022,
+          "lat": 55.6722839
+        },
+        "distance_km": 11.954347816833389
+      }
+    ],
+    "errors": [],
+    "address_test": {
+      "original_address": "г Москва муниципальный округ Басманный ул Покровка дом 42",
+      "address_components": {
+        "district": "Басманный",
+        "street": "Покровка",
+        "settlement": "",
+        "city": "Москва",
+        "region": "",
+        "confidence": 0.95
+      },
+      "coordinates": {
+        "lon": 37.639842028604946,
+        "lat": 55.75879175
+      },
+      "geocoding_success": true,
+      "variants_tried": 6,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  },
+  {
+    "lot_address": "Зеленоград, корпус 847",
+    "error": "Геокодирование не удалось",
+    "address_test": {
+      "original_address": "Зеленоград, корпус 847",
+      "address_components": {
+        "district": "",
+        "street": "",
+        "settlement": "Зеленоград",
+        "city": "Москва",
+        "region": "Москва",
+        "confidence": 0.9
+      },
+      "coordinates": null,
+      "geocoding_success": false,
+      "variants_tried": 2,
+      "successful_variant": null,
+      "geocoder_used": null,
+      "error": null
+    }
+  }
+]
