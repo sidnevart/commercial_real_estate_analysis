@@ -1171,120 +1171,261 @@ class CianParser:
         self._address_filter_cache[address] = final_region
         return final_region
 
+    def extract_area_smart(self, soup, offer_info=None):
+        """
+        Умное извлечение площади с приоритетом заголовков и валидацией
+        """
+        log.debug("=== SMART AREA EXTRACTION ===")
+        
+        # 1. ПРИОРИТЕТ: Площадь из заголовков (title, og:title)
+        title_area = self._extract_area_from_titles(soup)
+        if title_area:
+            log.info(f"✅ Площадь из заголовков: {title_area} м²")
+            return title_area
+        
+        # 2. Площадь из JSON структурированных данных (с валидацией)
+        json_area = self._extract_area_from_json(soup, offer_info)
+        if json_area and self._validate_area(json_area, title_area):
+            log.info(f"✅ Площадь из JSON (валидна): {json_area} м²")
+            return json_area
+        
+        # 3. Площадь из специфических полей (только основные)
+        field_area = self._extract_area_from_specific_fields(soup)
+        if field_area and self._validate_area(field_area, title_area):
+            log.info(f"✅ Площадь из полей (валидна): {field_area} м²")
+            return field_area
+        
+        log.warning("❌ Площадь не найдена или не валидна")
+        return None
+
+    def _extract_area_from_titles(self, soup):
+        """Извлекает площадь только из заголовков страницы"""
+        log.debug("--- Поиск площади в заголовках ---")
+        
+        title_sources = [
+            ("title", soup.find('title')),
+            ("og:title", soup.find('meta', {'property': 'og:title'})),
+            ("description", soup.find('meta', {'name': 'description'})),
+        ]
+        
+        for source_name, element in title_sources:
+            if not element:
+                continue
+                
+            text = element.get('content') if source_name != 'title' else element.get_text()
+            if not text:
+                continue
+                
+            log.debug(f"Анализ {source_name}: {text[:100]}...")
+            
+            # Паттерны для поиска площади в заголовках
+            patterns = [
+                r'от\s*(\d+(?:[,\.]\d+)?)\s*до\s*(\d+(?:[,\.]\d+)?)\s*м²',  # от X до Y м²
+                r'от\s*(\d+(?:[,\.]\d+)?)\s*до\s*(\d+(?:[,\.]\d+)?)м²',     # от X до Yм²
+                r'площадью\s*от\s*(\d+(?:[,\.]\d+)?)\s*до\s*(\d+(?:[,\.]\d+)?)\s*м²',
+                r'(\d+(?:[,\.]\d+)?)\s*м²',  # просто X м²
+                r'(\d+(?:[,\.]\d+)?)м²',     # просто Xм²
+                r'(\d+(?:[,\.]\d+)?)\s*кв\.?\s*м',  # X кв.м
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    if isinstance(match, tuple) and len(match) == 2:
+                        # Диапазон площадей - берем максимальную
+                        try:
+                            area1 = float(match[0].replace(',', '.'))
+                            area2 = float(match[1].replace(',', '.'))
+                            area = max(area1, area2)
+                            log.info(f"Найден диапазон в {source_name}: {area1}-{area2}, выбрана {area}")
+                            return area
+                        except ValueError:
+                            continue
+                    else:
+                        # Одиночное значение
+                        try:
+                            area = float(match.replace(',', '.') if isinstance(match, str) else match)
+                            if 50 <= area <= 5000:  # Разумные пределы
+                                log.info(f"Найдена площадь в {source_name}: {area}")
+                                return area
+                        except (ValueError, AttributeError):
+                            continue
+        
+        log.debug("Площадь в заголовках не найдена")
+        return None
+
+    def _extract_area_from_json(self, soup, offer_info):
+        """Извлекает площадь из JSON данных с осторожностью"""
+        log.debug("--- Поиск площади в JSON ---")
+        
+        # 1. Из переданного offer_info
+        if offer_info:
+            try:
+                json_area = offer_info.get("offerData", {}).get("offer", {}).get("totalArea")
+                if json_area:
+                    area = float(json_area)
+                    log.info(f"Площадь из offer_info: {area}")
+                    return area
+            except (ValueError, TypeError):
+                pass
+        
+        # 2. Из JSON-LD (очень осторожно)
+        json_scripts = soup.find_all('script', type='application/ld+json')
+        for i, script in enumerate(json_scripts):
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict):
+                    # Ищем только в основных полях
+                    for field in ['floorSize', 'area']:
+                        if field in data:
+                            area = float(data[field])
+                            if 50 <= area <= 5000:  # Валидный диапазон
+                                log.info(f"Площадь из JSON-LD[{i}].{field}: {area}")
+                                return area
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+        
+        log.debug("Площадь в JSON не найдена")
+        return None
+
+    def _extract_area_from_specific_fields(self, soup):
+        """Извлекает площадь только из специфических полей площади"""
+        log.debug("--- Поиск площади в специфических полях ---")
+        
+        # Ищем только в элементах, которые точно относятся к площади
+        area_selectors = [
+            '[data-testid="areas-table"] .area',  # Таблица площадей
+            '.area-value',                        # Значение площади
+            '[data-name="AreaValue"]',           # Поле площади
+            '.object-area',                      # Площадь объекта
+        ]
+        
+        for selector in area_selectors:
+            elements = soup.select(selector)
+            for element in elements:
+                text = element.get_text().strip()
+                log.debug(f"Проверка {selector}: {text}")
+                
+                # Ищем числовое значение площади
+                area_match = re.search(r'(\d+(?:[,\.]\d+)?)', text)
+                if area_match:
+                    try:
+                        area = float(area_match.group(1).replace(',', '.'))
+                        if 50 <= area <= 5000:  # Разумные пределы
+                            log.info(f"Площадь из поля {selector}: {area}")
+                            return area
+                    except ValueError:
+                        continue
+        
+        log.debug("Площадь в специфических полях не найдена")
+        return None
+
+    def _validate_area(self, candidate_area, reference_area=None):
+        """Валидирует найденную площадь"""
+        if not candidate_area:
+            return False
+        
+        # Базовая валидация - разумные пределы
+        if not (50 <= candidate_area <= 5000):
+            log.warning(f"Площадь {candidate_area} вне разумных пределов")
+            return False
+        
+        # Если есть эталонная площадь из заголовка, проверяем совместимость
+        if reference_area:
+            # Разрешаем отклонение до 20%
+            diff_percent = abs(candidate_area - reference_area) / reference_area * 100
+            if diff_percent > 20:
+                log.warning(f"Площадь {candidate_area} слишком отличается от заголовка {reference_area} ({diff_percent:.1f}%)")
+                return False
+        
+        return True
+
     def extract_offer_data(self, offer_page, offer_url, lot_uuid, offer_type):
-        """Извлекает данные о предложении с обработкой ошибок и улучшенным извлечением площади"""
+        """Извлекает данные о предложении с улучшенным извлечением площади"""
         try:
             offer_soup = BeautifulSoup(offer_page, 'lxml')
             
-            # Извлекаем площадь из заголовка
-            title_area = None
-            title_tag = offer_soup.find("h1")
-            if title_tag:
-                title_text = title_tag.get_text()
-                # Ищем площадь в заголовке (например: "120 м²", "120м²", "120 кв.м")
-                area_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:м²|кв\.?м|м2)', title_text, re.IGNORECASE)
-                if area_match:
-                    title_area = float(area_match.group(1))
-                    log.info(f"Найдена площадь в заголовке: {title_area} м²")
-            
             # Поиск скрипта с данными объявления
             script_tag = None
+            offer_info = None
+            
             for script in offer_soup.find_all("script"):
                 if script.string and "window._cianConfig['frontend-offer-card']" in script.string:
                     script_tag = script
                     break
             
-            if not script_tag:
-                log.warning(f"Не найден скрипт с данными объявления {offer_url}")
+            if script_tag:
+                try:
+                    # Извлечение JSON данных
+                    config_json_string = (
+                        script_tag.string.strip().split(".concat(", 1)[1].rsplit(");", 1)[0]
+                    )
+                    config_json = json.loads(config_json_string)
+                    
+                    # Поиск блока с данными предложения
+                    for block in config_json:
+                        if block.get("key") == "defaultState":
+                            offer_info = block.get("value")
+                            break
+                except Exception as e:
+                    log.warning(f"Ошибка при извлечении JSON из скрипта: {e}")
+            
+            # ИСПОЛЬЗУЕМ УЛУЧШЕННОЕ ИЗВЛЕЧЕНИЕ ПЛОЩАДИ
+            area = self.extract_area_smart(offer_soup, offer_info)
+            
+            if not area:
+                log.warning(f"Площадь не найдена для {offer_url}")
                 return None
                 
-            try:
-                # Извлечение JSON данных
-                config_json_string = (
-                    script_tag.string.strip().split(".concat(", 1)[1].rsplit(");", 1)[0]
-                )
-                config_json = json.loads(config_json_string)
-                
-                # Поиск блока с данными предложения
-                offer_info = None
-                for block in config_json:
-                    if block.get("key") == "defaultState":
-                        offer_info = block.get("value")
-                        break
-                        
-                if not offer_info:
-                    log.warning(f"Не найден блок данных объявления {offer_url}")
-                    return None
-                    
-                # Извлечение площади из JSON
-                json_area = None
-                try:
-                    if "land" in offer_info["offerData"]["offer"]:
-                        land = offer_info["offerData"]["offer"]["land"]
-                        json_area = float(land["area"])
-                        
-                        # Преобразуем в квадратные метры в зависимости от единицы измерения
-                        if land.get("areaUnitType") == "sotka":
-                            json_area *= 100
-                        elif land.get("areaUnitType") == "hectare":
-                            json_area *= 10000
-                    else:
-                        json_area = float(offer_info["offerData"]["offer"].get("totalArea", 0))
-                except (KeyError, ValueError, TypeError):
-                    log.warning(f"Ошибка при извлечении площади из JSON для {offer_url}")
-                
-                # Выбираем площадь: приоритет заголовку, если есть расхождение
-                if title_area and json_area:
-                    if abs(title_area - json_area) < 10:  # Допустимое расхождение 10 м²
-                        area = json_area  # Берем из JSON если близко
-                    else:
-                        area = title_area  # Берем из заголовка если есть расхождение
-                        log.info(f"Расхождение площади: заголовок={title_area}, JSON={json_area}, выбрана площадь из заголовка")
-                elif title_area:
-                    area = title_area
-                    log.info(f"Площадь взята из заголовка: {area} м²")
-                elif json_area:
-                    area = json_area
-                    log.info(f"Площадь взята из JSON: {area} м²")
-                else:
-                    log.warning(f"Площадь не найдена для {offer_url}")
-                    return None
-                    
-                # Проверка, что площадь указана
-                if not area or area < 60:
-                    log.warning(f"Площадь не указана или меньше 60м² для {offer_url}")
-                    return None
-                
-                # Извлекаем адрес и цену
+            # Проверка минимальной площади
+            if area < 60:
+                log.warning(f"Площадь {area} м² меньше минимальной (60 м²) для {offer_url}")
+                return None
+            
+            # Извлекаем адрес и цену
+            address = ""
+            price = 0
+            
+            if offer_info:
                 try:
                     address = offer_info["adfoxOffer"]["response"]["data"]["unicomLinkParams"]["puid14"]
                     price = offer_info["offerData"]["offer"].get(
                         "priceTotalRur",
                         offer_info["offerData"]["offer"].get("priceTotalPerMonthRur", 0)
                     )
-                    
-                    # Создаем объект Offer
-                    offer = Offer(
-                        id=offer_url.split('/')[-2],
-                        lot_uuid=lot_uuid,
-                        address=address,
-                        area=area,
-                        price=price,
-                        url=offer_url,
-                        type=offer_type
-                    )
-                    
-                    log.info(f"Успешно создано объявление {offer_url}")
-                    return offer
-                    
                 except Exception as e:
-                    log.warning(f"Ошибка при создании объекта Offer для {offer_url}: {e}")
-                    return None
-                    
-            except Exception as e:
-                log.error(f"Ошибка при обработке JSON: {e}")
-                return None
-                
+                    log.warning(f"Ошибка при извлечении адреса/цены из JSON: {e}")
+            
+            # Если адрес не найден в JSON, пытаемся найти в HTML
+            if not address:
+                # Пытаемся найти адрес в breadcrumbs или заголовке
+                breadcrumbs = offer_soup.find_all('span', class_='breadcrumbs')
+                if breadcrumbs:
+                    address = breadcrumbs[-1].get_text().strip()
+                else:
+                    # Последний шанс - из заголовка
+                    title = offer_soup.find('title')
+                    if title:
+                        title_text = title.get_text()
+                        # Простое извлечение адреса из заголовка (после площади)
+                        addr_match = re.search(r'м²\s+(.+?),\s+Москва', title_text)
+                        if addr_match:
+                            address = f"Москва, {addr_match.group(1).strip()}"
+            
+            # Создаем объект Offer
+            offer = Offer(
+                id=offer_url.split('/')[-2] if offer_url.endswith('/') else offer_url.split('/')[-1],
+                lot_uuid=lot_uuid,
+                address=address or "Адрес не указан",
+                area=area,
+                price=price,
+                url=offer_url,
+                type=offer_type
+            )
+            
+            log.info(f"✅ Успешно создано объявление {offer_url} (площадь: {area} м²)")
+            return offer
+            
         except Exception as e:
             log.error(f"Общая ошибка при обработке объявления {offer_url}: {e}")
             return None

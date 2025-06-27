@@ -2,7 +2,7 @@
 import os, httpx, asyncio, logging
 logger = logging.getLogger(__name__)
 
-API_KEY  = os.getenv("OPENAI_API_KEY")                 # ваш ключ shds-…
+API_KEY  = 'shds-b01Ta8kUXUaK9mQMz07bX9UmJny'                 # ваш ключ shds-…
 BASE_URL = "https://gptunnel.ru/v1"
 
 HEADERS  = {"Authorization": API_KEY}

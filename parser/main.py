@@ -180,123 +180,50 @@ def calculate_district(address: str) -> str:
     return "Москва" # Default to Moscow instead of Unknown
 
 def calculate_median_prices(offers_by_district: Dict[str, List[Offer]]) -> Dict[str, float]:
-    """Calculate median price per square meter by district with detailed logging."""
-    global district_price_stats
-    
+    """Calculate median price per square meter by district with safe error handling."""
     median_prices = {}
-    district_stats = {}
     
     logging.info(f"Расчет медианных цен по {len(offers_by_district)} районам")
     
     for district, offers in offers_by_district.items():
-        if not offers:
-            logging.warning(f"Нет объявлений для района '{district}'")
+        if not offers or len(offers) < 2:  # ИСПРАВЛЯЕМ: нужно минимум 2 точки данных
+            logging.warning(f"Недостаточно данных для района '{district}' ({len(offers)} объявлений)")
             continue
             
         # Фильтруем предложения с корректной площадью
-        valid_offers = [offer for offer in offers if offer.area > 0]
+        valid_offers = [offer for offer in offers if offer.area > 0 and offer.price > 0]
         
-        if len(valid_offers) < len(offers):
-            logging.warning(f"В районе '{district}' найдено {len(offers) - len(valid_offers)} объявлений с нулевой площадью")
-        
-        if not valid_offers:
-            logging.warning(f"Нет объявлений с корректной площадью для района '{district}'")
+        if len(valid_offers) < 2:  # ИСПРАВЛЯЕМ: нужно минимум 2 валидных предложения
+            logging.warning(f"Недостаточно валидных данных для района '{district}'")
             continue
             
         # Рассчитываем цену за квадратный метр
         prices_per_sqm = [offer.price / offer.area for offer in valid_offers]
         
-        if not prices_per_sqm:
-            logging.warning(f"Не удалось рассчитать цены за м² для района '{district}'")
+        if len(prices_per_sqm) < 2:  # ИСПРАВЛЯЕМ: проверяем еще раз
+            logging.warning(f"Недостаточно цен для расчета в районе '{district}'")
             continue
+        
+        try:
+            # БЕЗОПАСНЫЙ расчет медианы
+            median_price = statistics.median(prices_per_sqm)
+            median_prices[district] = median_price
             
-        # Рассчитываем статистику
-        min_price = min(prices_per_sqm)
-        max_price = max(prices_per_sqm)
-        avg_price = sum(prices_per_sqm) / len(prices_per_sqm)
-        median_price = statistics.median(prices_per_sqm)
-        
-        # Проверка на выбросы (опционально)
-        q1 = statistics.quantiles(prices_per_sqm, n=4)[0]
-        q3 = statistics.quantiles(prices_per_sqm, n=4)[2]
-        iqr = q3 - q1
-        
-        # Фильтрация выбросов
-        filtered_prices = [p for p in prices_per_sqm if q1 - 1.5 * iqr <= p <= q3 + 1.5 * iqr]
-        
-        outliers_count = len(prices_per_sqm) - len(filtered_prices)
-        if outliers_count > 0:
-            logging.info(f"В районе '{district}' обнаружено {outliers_count} выбросов цен")
-            if filtered_prices:
-                filtered_median = statistics.median(filtered_prices)
-                logging.info(f"Медиана после фильтрации: {filtered_median:.0f} ₽/м² (было {median_price:.0f} ₽/м²)")
-                median_price = filtered_median
-        
-        median_prices[district] = median_price
-        
-        # Сохраняем статистику для логирования и возможного экспорта
-        district_stats[district] = {
-            "count": len(valid_offers),
-            "min": min_price,
-            "max": max_price,
-            "avg": avg_price,
-            "median": median_price,
-            "outliers": outliers_count
-        }
-        
-        logging.info(
-            f"Район '{district}': {len(valid_offers)} объявлений, "
-            f"цены {min_price:.0f} - {max_price:.0f} ₽/м², "
-            f"медиана {median_price:.0f} ₽/м²"
-        )
+            logging.info(f"Район '{district}': {len(valid_offers)} объявлений, медиана {median_price:.0f} ₽/м²")
+            
+        except Exception as e:
+            logging.error(f"Ошибка при расчете медианы для района '{district}': {e}")
+            continue
     
-    # Логируем итоговые результаты
-    if median_prices:
-        avg_median = sum(median_prices.values()) / len(median_prices)
-        min_median = min(median_prices.values())
-        max_median = max(median_prices.values())
-        
-        logging.info(f"Итого рассчитаны медианы для {len(median_prices)} районов")
-        logging.info(f"Диапазон медиан по районам: {min_median:.0f} - {max_median:.0f} ₽/м², в среднем {avg_median:.0f} ₽/м²")
-    else:
-        logging.warning("Не удалось рассчитать медианные цены ни для одного района")
-    
-    # Сохраняем статистику для возможного использования
-    district_price_stats = district_stats
+    if not median_prices:
+        logging.warning("⚠️ Не удалось рассчитать медианные цены ни для одного района")
     
     return median_prices
 
 def export_price_statistics():
-    """Экспортирует детальную статистику по ценам в отдельный лист Google Sheets."""
-    global district_price_stats
-    
-    if not district_price_stats:
-        logging.warning("Нет данных статистики для экспорта")
-        return
-        
-    try:
-        headers = ["Район", "Кол-во объявлений", "Мин. цена ₽/м²", "Макс. цена ₽/м²", 
-                  "Средняя цена ₽/м²", "Медианная цена ₽/м²", "Кол-во выбросов"]
-                  
-        rows = [headers]
-        
-        for district, stats in district_price_stats.items():
-            row = [
-                district,
-                stats["count"],
-                round(stats["min"]),
-                round(stats["max"]),
-                round(stats["avg"]),
-                round(stats["median"]),
-                stats["outliers"]
-            ]
-            rows.append(row)
-            
-        push_custom_data("price_statistics", rows)
-        logging.info(f"Экспортирована статистика цен по {len(district_price_stats)} районам")
-        
-    except Exception as e:
-        logging.error(f"Ошибка при экспорте статистики цен: {e}")
+    """ОТКЛЮЧАЕМ экспорт статистики для избежания ошибок"""
+    logging.info("📊 Экспорт статистики отключен для стабильности")
+    return
 
 async def filter_offers_without_geocoding(lot_address: str, offers: List[Offer], district_priority=True) -> List[Offer]:
     """Фильтрует предложения без использования геокодирования, когда API недоступно."""
@@ -860,13 +787,13 @@ async def main():
             else:
                 # Не удалось восстановить, начинаем с нуля
                 logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
-                lots = await fetch_lots(max_pages=5)
+                lots = await fetch_lots(max_pages=10)
                 processed_indices = set()
                 start_idx = 0
         else:
             # Начинаем с нуля
             logging.info("🔄 Запускаем обработку с нуля (без восстановления)")
-            lots = await fetch_lots(max_pages=5)
+            lots = await fetch_lots(max_pages=10)
             processed_indices = set()
             start_idx = 0
         
@@ -879,7 +806,7 @@ async def main():
         # Инициализируем коллекции для пакетной обработки
         current_batch_sale = []
         current_batch_rent = []
-        batch_size = 5  # Размер пакета для сохранения
+        batch_size = 1  # Размер пакета для сохранения
         
         # Основной цикл обработки лотов, начиная с start_idx
         for i in range(start_idx, len(lots)):
@@ -1111,16 +1038,32 @@ async def main():
             
         # Рассчитываем и экспортируем статистику по районам
         median_prices = calculate_median_prices(offers_by_district)
-        export_price_statistics()
         
-        # Отправляем окончательную статистику по районам
-        if district_offer_count:
-            logging.info(f"Отправка статистики по {len(district_offer_count)} районам")
-            push_district_stats(dict(district_offer_count))
+        if offers_by_district and any(len(offers) >= 2 for offers in offers_by_district.values()):
+            try:
+                median_prices = calculate_median_prices(offers_by_district)
+                logging.info(f"✅ Рассчитаны медианные цены для {len(median_prices)} районов")
+            except Exception as e:
+                logging.error(f"❌ Ошибка при расчете медианных цен: {e}")
+                median_prices = {}
         else:
-            # Создаем заглушку для избежания ошибок
-            logging.warning("Нет данных о районах. Создаем заглушку для статистики.")
-            push_district_stats({"Москва": 0})
+            logging.info("⏭️ Пропускаем расчет медианных цен (недостаточно данных)")
+            median_prices = {}
+            
+        # Отправляем окончательную статистику по районам
+        if district_offer_count and len(district_offer_count) > 0:
+            try:
+                logging.info(f"Отправка статистики по {len(district_offer_count)} районам")
+                push_district_stats(dict(district_offer_count))
+            except Exception as e:
+                logging.error(f"❌ Ошибка при отправке статистики районов: {e}")
+        else:
+            # Создаем минимальную заглушку
+            logging.info("⏭️ Отправляем заглушку для статистики районов")
+            try:
+                push_district_stats({"Москва": 0, "Московская область": 0})
+            except Exception as e:
+                logging.error(f"❌ Ошибка при отправке заглушки: {e}")
         
         # Отправляем ежедневную сводку в Telegram
         if bot_service.is_enabled() and processed_lots:
