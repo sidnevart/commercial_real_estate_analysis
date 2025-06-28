@@ -8,6 +8,7 @@ import time
 import logging
 import random
 import json
+from parser.test_address_cleanup import simplify_address_for_geocoding
 from typing import List, Tuple, Dict, Union, Optional, Any
 # Добавьте в импорты в начале файла:
 import re
@@ -19,6 +20,7 @@ import orjson
 import undetected_chromedriver as uc
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from fake_useragent import UserAgent
+from parser.cian_district import gpt_extract_most_local_cian_part_fixed
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -785,23 +787,11 @@ class CianParser:
         
         return None
 
+    # И заменяем функцию unformatted_address_to_cian_search_filter на улучшенную версию:
+
+
     def unformatted_address_to_cian_search_filter(self, address: str) -> str:
-        """
-        Улучшенный алгоритм преобразования адреса в параметр поискового фильтра ЦИАН.
         
-        Теперь учитывает:
-        - административные районы города
-        - микрорайоны, деревни, посёлки
-        - муниципальные округа
-        - городские округа
-        - известные улицы с предварительно извлеченными ID
-        
-        Args:
-            address: Текстовый адрес объекта
-                
-        Returns:
-            Строка параметра для поискового URL ЦИАН
-        """
         # Проверка кэша
         if not hasattr(self, '_address_filter_cache'):
             self._address_filter_cache = {}
@@ -1170,6 +1160,7 @@ class CianParser:
         # Сохраняем в кэш
         self._address_filter_cache[address] = final_region
         return final_region
+    
 
     def extract_area_smart(self, soup, offer_info=None):
         """
@@ -1540,5 +1531,40 @@ def fetch_nearby_offers(search_filter: str, lot_uuid: str, property_category: st
     return get_parser().parse_nearby_offers(search_filter, lot_uuid, property_category)
 
 def unformatted_address_to_cian_search_filter(address: str) -> str:
-    """Обертка для преобразования адреса в поисковый фильтр"""
-    return get_parser().unformatted_address_to_cian_search_filter(address)
+    """
+    Улучшенная функция преобразования адреса в поисковый фильтр с очисткой дубликатов.
+    """
+    try:
+        # НОВОЕ: Сначала очищаем адрес от дубликатов
+        cleaned_address = simplify_address_for_geocoding(address)
+        logging.info(f"🧹 Очищенный адрес: '{cleaned_address}' (было: '{address}')")
+        
+        # Получаем самый локальный элемент адреса
+        local_element = gpt_extract_most_local_cian_part_fixed(cleaned_address)
+        
+        logging.info(f"🎯 Локальный элемент для ЦИАН поиска: '{local_element}' (адрес: '{cleaned_address[:50]}...')")
+        
+        # Если получили конкретное название улицы или района, используем его для уточненного поиска
+        if local_element and local_element not in ["Неизвестно", "Москва", "Московская область"]:
+            
+            # Если это улица - пробуем найти её ID в кэше
+            if any(keyword in cleaned_address.lower() for keyword in ["ул.", "улица", "пр-т", "проспект", "б-р", "бульвар", "наб", "набережная"]):
+                street_id = get_parser().find_street_id(local_element)
+                if street_id:
+                    logging.info(f"✅ Найден ID улицы '{local_element}': {street_id}")
+                    return f"street[0]={street_id}"
+            
+            # Если это район - пробуем найти его ID
+            if moscow_district_name_to_cian_id and local_element in moscow_district_name_to_cian_id:
+                district_id = moscow_district_name_to_cian_id[local_element]
+                logging.info(f"✅ Найден ID района '{local_element}': {district_id}")
+                return f"district[0]={district_id}"
+        
+        # Fallback к старому методу если GPT не дал результата
+        logging.info("🔄 Fallback к стандартному методу определения фильтра")
+        return get_parser().unformatted_address_to_cian_search_filter(cleaned_address)
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка при GPT-определении ЦИАН фильтра: {e}")
+        # Полный fallback к старому методу
+        return get_parser().unformatted_address_to_cian_search_filter(address)

@@ -7,21 +7,25 @@ import os
 import pickle
 import pytz
 import json
+from core.deduplication_db import dedup_db
 import sys
 from datetime import datetime
 from parser.address_parser import calculate_address_components, is_moscow_address, is_moscow_oblast_address
 from collections import defaultdict
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from parser.torgi_async import fetch_lots
 from parser.cian_minimal import fetch_nearby_offers, unformatted_address_to_cian_search_filter
 from parser.google_sheets import push_lots, push_offers, push_district_stats
 from parser.gpt_classifier import classify_property  
 from parser.cian_minimal import get_parser
-from parser.geo_utils import filter_offers_by_distance
+# from parser.geo_utils import filter_offers_by_distance
 from core.models import Lot, Offer, PropertyClassification
 from core.config import CONFIG
+from parser.lot_district import gpt_extract_most_local_part_fixed
+from test_address_cleanup import enhanced_address_search, create_fixed_geocoder, simplify_address_for_geocoding
 #from parser.geo_utils import filter_offers_by_distance
 import random
+from parser.format_table import apply_all_formatting
 
 # Импорт Telegram бота
 from bot.bot_service import bot_service
@@ -102,7 +106,41 @@ def get_cian_metrics():
         return {"error": str(e)}
 
 def calculate_district(address: str) -> str:
-    """Улучшенная функция определения района из адреса."""
+    """
+    Улучшенная функция определения района из адреса с приоритетом GPT.
+    
+    Args:
+        address: Адрес для анализа
+        
+    Returns:
+        Самый локальный элемент адреса (улица → район → город)
+    """
+    if not address:
+        return "Москва"  # Дефолт
+    
+    try:
+        # Используем исправленную GPT-функцию как основной метод
+        from lot_district import gpt_extract_most_local_part_fixed
+        
+        result = gpt_extract_most_local_part_fixed(address)
+        
+        # Валидируем результат
+        if result and result != "Неизвестно" and len(result) > 1:
+            logging.info(f"🎯 GPT определил район для '{address[:50]}...': '{result}'")
+            return result
+        else:
+            # Fallback к старой логике для совместимости
+            logging.warning(f"⚠️ GPT не смог определить район для '{address[:50]}...', используем fallback")
+            return calculate_district_fallback(address)
+            
+    except Exception as e:
+        logging.error(f"❌ Ошибка при GPT-определении района: {e}")
+        return calculate_district_fallback(address)
+
+def calculate_district_fallback(address: str) -> str:
+    """
+    Резервная функция определения района (старая логика для совместимости).
+    """
     if not address:
         return "Москва"
         
@@ -122,7 +160,7 @@ def calculate_district(address: str) -> str:
     if mo_match:
         return mo_match.group(1).capitalize()
         
-    # Хорошо известные районы Москвы 
+    # Хорошо известные районы Москвы (оставляем как есть для совместимости)
     common_districts = [
         "Арбат", "Басманный", "Замоскворечье", "Красносельский", "Мещанский", "Пресненский", "Таганский", "Тверской", "Хамовники", "Якиманка",
         "Аэропорт", "Беговой", "Бескудниковский", "Войковский", "Восточное Дегунино", "Головинский", "Дмитровский", "Западное Дегунино",
@@ -177,7 +215,7 @@ def calculate_district(address: str) -> str:
             return full_name
             
     # По умолчанию возвращаем Москва для всех остальных случаев
-    return "Москва" # Default to Moscow instead of Unknown
+    return "Москва"
 
 def calculate_median_prices(offers_by_district: Dict[str, List[Offer]]) -> Dict[str, float]:
     """Calculate median price per square meter by district with safe error handling."""
@@ -352,7 +390,7 @@ def calculate_lot_district_metrics(lot, sale_offers, rent_offers):
             lot.market_value = lot.market_price_per_sqm * lot.area
             lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
             lot.capitalization_rub = lot.market_value - lot.price
-            lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
+            lot.capitalization_percent = (lot.capitalization_rub / lot.price) if lot.price > 0 else 0
     
     # Рассчитываем доходность на основе объявлений об аренде
     lot.rent_data = []
@@ -371,12 +409,12 @@ def calculate_lot_district_metrics(lot, sale_offers, rent_offers):
             lot.has_rent_data = True
             lot.annual_income = lot.average_rent_price_per_sqm * 12 * lot.area
             lot.monthly_gap = lot.annual_income / 12
-            lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
+            lot.annual_yield_percent = (lot.annual_income / lot.price) if lot.price > 0 else 0
         else:
             # Если нет данных аренды, используем стандартные коэффициенты
             lot.has_rent_data = False
             lot.monthly_gap = lot.market_value * 0.007  # 0.7% в месяц
-            lot.annual_yield_percent = (lot.monthly_gap * 12 / lot.price) * 100 if lot.price > 0 else 0
+            lot.annual_yield_percent = (lot.monthly_gap * 12 / lot.price) if lot.price > 0 else 0
     
     logging.info(f"Лот {lot.id}: Метрики рассчитаны - "
                f"Рыночная цена: {getattr(lot, 'market_price_per_sqm', 0):.0f} ₽/м², "
@@ -502,6 +540,32 @@ def calculate_intermediate_metrics(processed_lots, offers_by_district, current_i
     logging.info(f"✅ Обновлены метрики для {len(updated_lots)} лотов")
     return updated_lots
 
+
+async def enhanced_geocoding_address(address: str) -> Optional[Tuple[float, float]]:
+    """
+    Улучшенная геокодировка адреса с каскадным поиском и очисткой дубликатов
+    """
+    if not address:
+        return None
+    
+    # Создаем геокодер
+    geocoder = create_fixed_geocoder()
+    if not geocoder:
+        logging.warning("Геокодер недоступен")
+        return None
+    
+    # Используем улучшенный поиск адреса
+    result = enhanced_address_search(geocoder, address)
+    
+    if result:
+        lat, lon, found_address, used_variation = result
+        logging.info(f"✅ Геокодировка успешна: '{address}' → {lat:.6f}, {lon:.6f}")
+        logging.info(f"   Использован вариант: '{used_variation}'")
+        return (lon, lat)  # Возвращаем в формате (longitude, latitude)
+    else:
+        logging.warning(f"❌ Геокодировка не удалась: '{address}'")
+        return None
+
 def estimate_market_value_from_rent(lot, rent_prices_per_sqm):
     """Оценка рыночной стоимости на основе арендных ставок через метод капитализации."""
     # Годовой арендный доход
@@ -537,10 +601,7 @@ def estimate_market_value_from_rent(lot, rent_prices_per_sqm):
 def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offers: List[Offer]):
     """
     Рассчитывает метрики для лота на основе отфильтрованных объявлений.
-    
-    Логика:
-    - Капитализация рассчитывается ТОЛЬКО на основе объявлений о продаже
-    - Доходность и ГАП рассчитываются ТОЛЬКО на основе объявлений об аренде
+    ОКОНЧАТЕЛЬНАЯ ВЕРСИЯ: проценты как дроби для Google Sheets
     """
     def is_valid_offer(offer):
         if offer.area <= 0 or offer.price <= 0:
@@ -592,43 +653,43 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
         prices_per_sqm = [offer.price / offer.area for offer in valid_sale_offers]
         
         if prices_per_sqm:
-            # Медианная рыночная цена за квадратный метр
             lot.market_price_per_sqm = statistics.median(prices_per_sqm)
-            
-            # Общая рыночная стоимость
             lot.market_value = lot.market_price_per_sqm * lot.area
-            
-            # Капитализация в рублях
             lot.capitalization_rub = lot.market_value - lot.price
             
-            # Капитализация в процентах
-            lot.capitalization_percent = (lot.capitalization_rub / lot.price) * 100 if lot.price > 0 else 0
-            
+            # ИСПРАВЛЕНО: капитализация как ДРОБЬ (0.256 для 25.6%)
+            lot.capitalization_percent = (lot.capitalization_rub / lot.price) if lot.price > 0 else 0
             lot.market_value_method = "sales"
+    else:
+        # НЕТ объявлений о продаже - НЕ можем посчитать капитализацию
+        lot.market_price_per_sqm = 0
+        lot.market_value = 0
+        lot.capitalization_rub = 0
+        lot.capitalization_percent = 0
+        lot.market_value_method = "no_sales_data"
     
-    # 2. Рассчитываем доходность и ГАП ТОЛЬКО на основе объявлений об аренде
+    # 2. Рассчитываем доходность ТОЛЬКО если есть объявления об аренде
     if valid_rent_offers:
         rent_prices_per_sqm = [offer.price / offer.area for offer in valid_rent_offers]
         
         if rent_prices_per_sqm:
-            # Медианная цена аренды за кв.м в месяц
             lot.average_rent_price_per_sqm = statistics.median(rent_prices_per_sqm)
-            
-            # ГАП = медиана по аренде за кв м * площадь
             lot.monthly_gap = lot.average_rent_price_per_sqm * lot.area
-            
-            # Чистый месячный доход (после расходов)
             net_monthly_income = lot.monthly_gap * (1 - expense_ratio)
-            
-            # Годовой чистый доход
             lot.annual_income = net_monthly_income * months_rented_per_year
             
-            # Доходность от аренды
-            lot.annual_yield_percent = (lot.annual_income / lot.price) * 100 if lot.price > 0 else 0
+            # ИСПРАВЛЕНО: доходность как ДРОБЬ (0.256 для 25.6%)
+            lot.annual_yield_percent = (lot.annual_income / lot.price) if lot.price > 0 else 0
+    else:
+        # НЕТ объявлений об аренде - НЕ можем посчитать доходность
+        lot.monthly_gap = 0
+        lot.annual_yield_percent = 0
+        lot.annual_income = 0
+        lot.average_rent_price_per_sqm = 0
     
-    # 3. Пороговые значения и плюсы
-    RENTAL_YIELD_THRESHOLD = 8.0  # 8% годовых
-    CAPITALIZATION_THRESHOLD = 15.0  # 15% капитализации
+    # 3. Пороговые значения как дроби
+    RENTAL_YIELD_THRESHOLD = 0.08  # 8% как 0.08
+    CAPITALIZATION_THRESHOLD = 0.15  # 15% как 0.15
     
     # Расчет плюсов
     rental_plus = lot.annual_yield_percent >= RENTAL_YIELD_THRESHOLD
@@ -643,17 +704,17 @@ def calculate_lot_metrics(lot: Lot, all_sale_offers: List[Offer], all_rent_offer
         lot.status = "excellent"
     elif lot.plus_count == 1:
         lot.status = "good"
-    elif lot.capitalization_percent > 0 or lot.annual_yield_percent > 5:
+    elif lot.capitalization_percent > 0 or lot.annual_yield_percent > 0.05:  # 5% как 0.05
         lot.status = "acceptable"
     else:
         lot.status = "poor"
     
-    # Логирование результатов
+    # Логирование (умножаем на 100 только для отображения)
     logging.info(
         f"Лот {lot.id}: Рыночная цена: {lot.market_price_per_sqm:,.0f} ₽/м², "
-        f"Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent:.1f}%), "
+        f"Капитализация: {lot.capitalization_rub:,.0f} ₽ ({lot.capitalization_percent*100:.1f}%), "
         f"ГАП: {lot.monthly_gap:,.0f} ₽/мес, "
-        f"Доходность: {lot.annual_yield_percent:.1f}%, "
+        f"Доходность: {lot.annual_yield_percent*100:.1f}%, "
         f"Плюсы: {lot.plus_count}/2 (аренда:{lot.plus_rental}, продажа:{lot.plus_sale}), "
         f"Статус: {lot.status}"
     )
@@ -734,6 +795,71 @@ async def filter_offers_by_distance(lot_address: str, offers: List[Offer], max_d
     return filtered_offers
 """
 from parser.google_sheets import setup_all_headers, push_custom_data
+
+
+async def filter_offers_by_distance(lot_address: str, offers: List[Offer], max_distance_km: float) -> List[Offer]:
+    """
+    Улучшенная фильтрация объявлений с использованием каскадной геокодировки
+    """
+    logger.info(f"🔍 Улучшенная фильтрация {len(offers)} объявлений для адреса {lot_address[:50]}...")
+    
+    if not offers:
+        return []
+    
+    # Пытаемся получить координаты лота с улучшенной геокодировкой
+    lot_coords = await enhanced_geocoding_address(lot_address)
+    
+    if not lot_coords:
+        # Fallback к фильтрации по району
+        logging.warning("⚠️ Геокодировка не удалась, используем фильтрацию по району")
+        return await filter_offers_without_geocoding(lot_address, offers, district_priority=True)
+
+    logger.info(f"Координаты лота: lon={lot_coords[0]:.6f}, lat={lot_coords[1]:.6f}")
+
+    filtered_offers = []
+    geocoding_failures = 0
+    
+    for i, offer in enumerate(offers, 1):
+        logger.debug(f"Обработка объявления {i}/{len(offers)}: {offer.id}")
+        
+        if not offer.address:
+            logger.debug(f"Пропуск объявления {offer.id} – нет адреса")
+            continue
+
+        # Используем улучшенную геокодировку для объявления
+        offer_coords = await enhanced_geocoding_address(offer.address)
+        
+        if not offer_coords:
+            logger.warning(f"Пропуск объявления {offer.id} – геокодировка не удалась для '{offer.address}'")
+            geocoding_failures += 1
+            continue
+
+        logger.debug(f"Объявление {offer.id} координаты: lon={offer_coords[0]:.6f}, lat={offer_coords[1]:.6f}")
+
+        # Расчет расстояния (простое евклидово расстояние как приближение)
+        try:
+            # Простой расчет расстояния в км (приближенно для Московского региона)
+            lat_diff = offer_coords[1] - lot_coords[1]
+            lon_diff = offer_coords[0] - lot_coords[0]
+            distance_deg = (lat_diff**2 + lon_diff**2)**0.5
+            distance_km = distance_deg * 111  # Примерно 111 км на градус
+            
+            if distance_km <= max_distance_km:
+                offer.distance_to_lot = round(distance_km, 2)
+                filtered_offers.append(offer)
+                logger.info(f"Включено объявление {offer.id} – {distance_km:.2f} км")
+            else:
+                logger.debug(f"Исключено объявление {offer.id} – {distance_km:.2f} км > {max_distance_km} км")
+                
+        except Exception as e:
+            logger.warning(f"Ошибка расчета расстояния для объявления {offer.id}: {e}")
+            continue
+
+    logger.info(f"✅ Улучшенная фильтрация завершена: отобрано {len(filtered_offers)} из {len(offers)} объявлений")
+    logger.info(f"   Неудачи геокодировки: {geocoding_failures}")
+    
+    return filtered_offers
+
 
 async def main():
     """
@@ -1035,7 +1161,10 @@ async def main():
         if current_batch_rent:
             logging.info(f"Сохраняем оставшиеся {len(current_batch_rent)} объявлений об аренде")
             push_offers("cian_rent_all", current_batch_rent)
-            
+
+        apply_all_formatting()
+        logging.info(f"🎨 Применено промежуточное форматирование на шаге {i}")
+
         # Рассчитываем и экспортируем статистику по районам
         median_prices = calculate_median_prices(offers_by_district)
         
@@ -1049,7 +1178,7 @@ async def main():
         else:
             logging.info("⏭️ Пропускаем расчет медианных цен (недостаточно данных)")
             median_prices = {}
-            
+
         # Отправляем окончательную статистику по районам
         if district_offer_count and len(district_offer_count) > 0:
             try:

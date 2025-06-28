@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def extract_address_components_gpt_sync(address: str) -> Dict:
     """
     Extracts structured components from an address using GPT.
-    Returns a dictionary with address components.
+    Enhanced version for better Russian address handling.
     """
     if not address or len(address) < 5:
         logger.warning(f"Empty or too short address: '{address}'")
@@ -24,23 +24,28 @@ def extract_address_components_gpt_sync(address: str) -> Dict:
         }
     
     prompt = f"""
-    Проанализируй следующий адрес и извлеки из него все компоненты в формате JSON:
+    Проанализируй следующий российский адрес и извлеки из него все компоненты в формате JSON:
     "{address}"
     
-    Верни строго JSON-объект со следующими полями (пустые, если не удалось найти):
-    * district: название района
-    * street: название улицы
+    Верни строго JSON-объект со следующими полями (пустые строки, если не удалось найти):
+    * district: название района (например, "Басманный", "ВАО", "Зеленоград")
+    * street: название улицы (например, "улица Тверская", "Пресненская набережная")
     * settlement: населенный пункт (город, поселок, деревня и т.д.)
-    * city: город
-    * region: регион/область
+    * city: город (например, "Москва", "Подольск", "Химки")
+    * region: регион/область (например, "Москва", "Московская область")
     * confidence: уровень уверенности от 0 до 1
+    
+    Особенности:
+    - Для Зеленограда: district="Зеленоград", city="Москва", region="Москва"
+    - Для административных округов Москвы: district="Название АО"
+    - Убирай сокращения: г.→город, ул.→улица, д.→дом
     
     Формат ответа:
     ```json
     {{
       "district": "название района",
       "street": "название улицы",
-      "settlement": "населенный пункт",
+      "settlement": "населенный пункт", 
       "city": "город",
       "region": "регион/область",
       "confidence": 0.95
@@ -52,7 +57,7 @@ def extract_address_components_gpt_sync(address: str) -> Dict:
         response = sync_chat(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты - эксперт по анализу и структурированию адресов в России. Извлекай компоненты точно и возвращай только JSON."},
+                {"role": "system", "content": "Ты - эксперт по анализу и структурированию российских адресов. Извлекай компоненты точно и возвращай только валидный JSON."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=500
@@ -68,6 +73,17 @@ def extract_address_components_gpt_sync(address: str) -> Dict:
             json_str = response
             
         result = json.loads(json_str)
+        
+        # Validate and clean result
+        for key in ["district", "street", "settlement", "city", "region"]:
+            if key not in result:
+                result[key] = ""
+            elif not isinstance(result[key], str):
+                result[key] = str(result[key])
+        
+        if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
+            result["confidence"] = 0.8  # Default confidence for GPT results
+        
         logger.info(f"Successfully parsed address components for: '{address}'")
         return result
         

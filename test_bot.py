@@ -1,116 +1,55 @@
-#!/usr/bin/env python3
 """
-Тест Telegram бота без реального запуска
+Скрипт для тестирования бота без планировщика
 """
+# filepath: test_bot.py
+
+import asyncio
+import logging
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pathlib import Path
 
-from core.config import CONFIG
-from core.models import Lot, PropertyClassification
-from bot.message_formatter import MessageFormatter
-from uuid import uuid4
-from datetime import datetime
+sys.path.append(str(Path(__file__).parent))
 
-def test_message_formatting():
-    """Тест форматирования сообщений"""
-    print("🧪 Тестирование форматирования сообщений...")
-    
-    # Создаем тестовый лот
-    test_lot = Lot(
-        id="123",
-        name="Коммерческое помещение на Тверской",
-        address="Москва, ул. Тверская, д. 1",
-        coords=(55.7558, 37.6176),
-        area=150.0,
-        price=15000000,
-        notice_number="Документ №12345",
-        lot_number=1,
-        auction_type="Аукцион",
-        sale_type="Продажа",
-        law_reference="44-ФЗ",
-        application_start=datetime.now(),
-        application_end=datetime.now(),
-        auction_start=datetime.now(),
-        cadastral_number="77:01:0001234:567",
-        property_category="Нежилое помещение",
-        ownership_type="Собственность",
-        auction_step=500000,
-        deposit=1500000,
-        recipient="Росимущество",
-        recipient_inn="1234567890",
-        recipient_kpp="123456789",
-        bank_name="Сбербанк",
-        bank_bic="044525225",
-        bank_account="40102810445370000022",
-        correspondent_account="30101810400000000225",
-        auction_url="https://torgi.gov.ru/test",
-        uuid=uuid4(),
-        district="Тверской район"
-    )
-    
-    # Добавляем финансовые метрики
-    test_lot.market_price_per_sqm = 120000
-    test_lot.current_price_per_sqm = 100000
-    test_lot.market_value = 18000000
-    test_lot.capitalization_rub = 1800000
-    test_lot.capitalization_percent = 12.0
-    test_lot.monthly_gap = 150000
-    test_lot.annual_yield_percent = 12.0
-    test_lot.market_deviation_percent = -16.7
-    test_lot.classification = PropertyClassification(
-        category="Стрит-ритейл",
-        size_category="120-250 м²",
-        has_basement=False,
-        is_top_floor=False
-    )
-    
-    # Тестируем форматирование
-    message = MessageFormatter.format_lot_analysis(test_lot)
-    print("📄 Отформатированное сообщение о лоте:")
-    print("=" * 50)
-    print(message)
-    print("=" * 50)
-    
-    return True
+from bot.bot_service import bot_service
 
-def test_config():
-    """Тест конфигурации"""
-    print("🧪 Тестирование конфигурации...")
-    
-    bot_token = CONFIG.get('telegram_bot_token', '')
-    enabled = CONFIG.get('telegram_notifications_enabled', False)
-    
-    print(f"✅ Уведомления включены: {enabled}")
-    print(f"{'✅' if bot_token else '❌'} Токен бота: {'установлен' if bot_token else 'не установлен'}")
-    
-    if not bot_token:
-        print("⚠️  Для работы бота нужно добавить токен в config.yaml")
-        print("   telegram_bot_token: 'ваш_токен_от_botfather'")
-    
-    return bool(bot_token)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def main():
-    """Основная функция теста"""
-    print("🤖 Тест Telegram бота для анализа недвижимости")
-    print("=" * 60)
+async def test_bot():
+    """Тестирует бота отдельно"""
+    logger.info("🤖 Тестирование Telegram бота")
     
-    # Тестируем конфигурацию
-    config_ok = test_config()
-    print()
+    # Инициализируем бот
+    bot_service.initialize()
     
-    # Тестируем форматирование
-    formatting_ok = test_message_formatting()
-    print()
+    if not bot_service.is_enabled():
+        logger.error("❌ Бот не настроен (проверьте config.yaml)")
+        return
     
-    if config_ok and formatting_ok:
-        print("✅ Все тесты пройдены! Бот готов к запуску.")
-        print("💡 Для запуска используйте: python3 run_bot.py")
-    else:
-        print("❌ Некоторые тесты не пройдены. Проверьте конфигурацию.")
-    
-    return config_ok and formatting_ok
+    try:
+        # Тест ежедневной сводки
+        await bot_service.send_daily_summary(15, 3)
+        logger.info("✅ Ежедневная сводка отправлена")
+        
+        # Тест уведомления о лотах (создаем тестовый лот)
+        from core.models import Lot
+        test_lot = Lot(
+            id="test_001",
+            name="Тестовый лот",
+            address="Москва, Тверская, 1",
+            area=100.0,
+            price=5000000,
+            annual_yield_percent=25.0
+        )
+        await bot_service.notify_new_lots([test_lot])
+        logger.info("✅ Уведомление о тестовом лоте отправлено")
+        
+        logger.info("🎉 Все тесты бота прошли успешно!")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка тестирования бота: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    asyncio.run(test_bot())

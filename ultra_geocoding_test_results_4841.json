@@ -1,0 +1,317 @@
+[
+  {
+    "original_address": "г Москва, ул Тверская, дом 7",
+    "address_components": {
+      "district": "",
+      "street": "ул Тверская",
+      "settlement": "",
+      "city": "Москва",
+      "region": "Москва",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.6086936,
+      "lat": 55.7623551
+    },
+    "geocoding_success": true,
+    "variants_tried": 20,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Москва, Пресненская набережная, дом 12",
+    "address_components": {
+      "district": "Пресненский",
+      "street": "Пресненская набережная",
+      "settlement": "",
+      "city": "Москва",
+      "region": "Москва",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.5411041,
+      "lat": 55.7467519
+    },
+    "geocoding_success": true,
+    "variants_tried": 19,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "обл Московская, г.о. Подольск, г Подольск, ул Правды, дом 20 Московская область, г. Подольск, ул. Правды, д. 20, пом. 1",
+    "address_components": {
+      "district": "",
+      "street": "Правды",
+      "settlement": "Подольск",
+      "city": "Подольск",
+      "region": "Московская область",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.4439535,
+      "lat": 55.3524887
+    },
+    "geocoding_success": true,
+    "variants_tried": 24,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Московская область, г Подольск, ул Правды, дом 20",
+    "address_components": {
+      "district": "",
+      "street": "ул Правды",
+      "settlement": "г Подольск",
+      "city": "Подольск",
+      "region": "Московская область",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.5822036,
+      "lat": 55.4114045
+    },
+    "geocoding_success": true,
+    "variants_tried": 22,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "г Москва, ВАО, Перово, ул Новогиреевская, д 42",
+    "address_components": {
+      "district": "ВАО",
+      "street": "ул Новогиреевская",
+      "settlement": "",
+      "city": "Москва",
+      "region": "",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.6063916,
+      "lat": 55.625578
+    },
+    "geocoding_success": true,
+    "variants_tried": 19,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Москва, СВАО, район Останкинский, проспект Мира, 119с536",
+    "address_components": {
+      "district": "Останкинский",
+      "street": "проспект Мира",
+      "settlement": "",
+      "city": "Москва",
+      "region": "Северный административный округ",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.6267804,
+      "lat": 55.8277063
+    },
+    "geocoding_success": true,
+    "variants_tried": 21,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Московская область, г Химки, ул Загородная, дом 4",
+    "address_components": {
+      "district": "",
+      "street": "Загородная",
+      "settlement": "",
+      "city": "Химки",
+      "region": "Московская область",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.4396994,
+      "lat": 55.8917293
+    },
+    "geocoding_success": true,
+    "variants_tried": 21,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "обл Московская, г Домодедово, мкр Северный, ул Советская, дом 50",
+    "address_components": {
+      "district": "Северный",
+      "street": "Советская",
+      "settlement": "Домодедово",
+      "city": "Домодедово",
+      "region": "Московская область",
+      "confidence": 0.9
+    },
+    "coordinates": {
+      "lon": 37.7647,
+      "lat": 55.4546771
+    },
+    "geocoding_success": true,
+    "variants_tried": 18,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "г Москва муниципальный округ Басманный ул Покровка дом 42",
+    "address_components": {
+      "district": "Басманный",
+      "street": "ул Покровка",
+      "settlement": "",
+      "city": "Москва",
+      "region": "",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.6063916,
+      "lat": 55.625578
+    },
+    "geocoding_success": true,
+    "variants_tried": 19,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Зеленоград, корпус 847",
+    "address_components": {
+      "district": "",
+      "street": "",
+      "settlement": "Зеленоград",
+      "city": "Москва",
+      "region": "Москва",
+      "confidence": 0.85
+    },
+    "coordinates": {
+      "lon": 37.214241,
+      "lat": 55.991971
+    },
+    "geocoding_success": true,
+    "variants_tried": 14,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "г Москва вн.тер.г. Москва муниципальный округ Хамовники ул Остоженка дом 53/2 строение 1",
+    "address_components": {
+      "district": "Хамовники",
+      "street": "Остоженка",
+      "settlement": "внутренний территориальный город",
+      "city": "Москва",
+      "region": "Москва",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.6063916,
+      "lat": 55.625578
+    },
+    "geocoding_success": true,
+    "variants_tried": 21,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Российская Федерация, город Москва, Центральный административный округ, муниципальный округ Басманный, улица Покровка, дом 42",
+    "address_components": {
+      "district": "Центральный административный округ",
+      "street": "улица Покровка",
+      "settlement": "",
+      "city": "Москва",
+      "region": "Российская Федерация",
+      "confidence": 0.9
+    },
+    "coordinates": {
+      "lon": 37.6527447,
+      "lat": 55.7624601
+    },
+    "geocoding_success": true,
+    "variants_tried": 27,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "МО, г Подольск, мкр Климовск, ул Заводская, д 1",
+    "address_components": {
+      "district": "Климовск",
+      "street": "Заводская",
+      "settlement": "",
+      "city": "Подольск",
+      "region": "Московская область",
+      "confidence": 0.9
+    },
+    "coordinates": {
+      "lon": 37.5405689,
+      "lat": 55.3800528
+    },
+    "geocoding_success": true,
+    "variants_tried": 28,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Москва г, Чистопрудный бульвар, дом 12К5",
+    "address_components": {
+      "district": "",
+      "street": "Чистопрудный бульвар",
+      "settlement": "",
+      "city": "Москва",
+      "region": "Москва",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 37.6380939,
+      "lat": 55.7647448
+    },
+    "geocoding_success": true,
+    "variants_tried": 14,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  },
+  {
+    "original_address": "Московская обл, Ленинский район, д Сосенки, ул Центральная, д 10",
+    "address_components": {
+      "district": "Ленинский район",
+      "street": "Центральная",
+      "settlement": "Сосенки",
+      "city": "",
+      "region": "Московская область",
+      "confidence": 0.95
+    },
+    "coordinates": {
+      "lon": 38.0353929,
+      "lat": 55.5043158
+    },
+    "geocoding_success": true,
+    "variants_tried": 11,
+    "successful_variant": null,
+    "geocoder_used": null,
+    "fallback_used": false,
+    "error": null
+  }
+]

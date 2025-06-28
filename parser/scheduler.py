@@ -1,66 +1,138 @@
-#!/usr/bin/env python3
 """
-Scheduler for running the parser at specific times.
-Run this script once to set up the scheduler.
+Планировщик для автоматического запуска парсера
+Запускается каждый день в 01:00 по московскому времени
 """
+# filepath: parser/scheduler.py
 
+import asyncio
 import logging
-import os
 import sys
+import schedule
+import time
+from pathlib import Path
 from datetime import datetime
-from apscheduler.schedulers.background import BlockingScheduler
-from apscheduler.triggers.cron import CronTrigger
+import pytz
 
-# Setup logging
+# Добавляем путь к проекту
+sys.path.append(str(Path(__file__).parent.parent))
+
+from parser.main import main as parser_main
+from core.deduplication_db import dedup_db
+
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("scheduler.log"),
-        logging.StreamHandler(sys.stdout)
+        logging.FileHandler("logs/scheduler.log"),
+        logging.StreamHandler()
     ]
 )
-log = logging.getLogger(__name__)
 
-def run_parser():
-    """Execute the main parser script."""
-    log.info("Starting scheduled parsing job")
+logger = logging.getLogger(__name__)
+
+# Московская временная зона
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
+async def scheduled_parser_run():
+    """Запуск парсера по расписанию"""
+    moscow_time = datetime.now(MOSCOW_TZ)
+    logger.info(f"🚀 ЗАПУСК ПЛАНОВОГО ПАРСИНГА - {moscow_time.strftime('%Y-%m-%d %H:%M:%S')} МСК")
+    logger.info("=" * 80)
+    
     try:
-        project_dir = os.path.dirname(os.path.abspath(__file__))
+        # Получаем статистику перед запуском
+        stats_before = dedup_db.get_stats()
+        logger.info(f"📊 Статистика БД перед запуском:")
+        logger.info(f"   • Лотов в БД: {stats_before.get('total_lots', 0)}")
+        logger.info(f"   • Объявлений в БД: {stats_before.get('total_offers', 0)}")
         
-        os.chdir(project_dir)
+        # Запускаем основной парсер на ВСЕ страницы
+        logger.info("🔄 Запуск основного парсера (все 35 страниц)...")
+        await parser_main()
         
-        os.system(f"{sys.executable} -m parser.main")
+        # Получаем статистику после запуска
+        stats_after = dedup_db.get_stats()
+        logger.info(f"📊 Статистика БД после запуска:")
+        logger.info(f"   • Лотов в БД: {stats_after.get('total_lots', 0)} (+{stats_after.get('total_lots', 0) - stats_before.get('total_lots', 0)})")
+        logger.info(f"   • Объявлений в БД: {stats_after.get('total_offers', 0)} (+{stats_after.get('total_offers', 0) - stats_before.get('total_offers', 0)})")
         
-        log.info("Parsing job completed successfully")
+        logger.info("=" * 80)
+        logger.info(f"✅ ПЛАНОВЫЙ ПАРСИНГ ЗАВЕРШЕН УСПЕШНО - {datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d %H:%M:%S')} МСК")
+        
     except Exception as e:
-        log.error(f"Error running parsing job: {e}", exc_info=True)
+        logger.error(f"❌ ОШИБКА ПРИ ПЛАНОВОМ ПАРСИНГЕ: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # Можно добавить отправку уведомления об ошибке
+        try:
+            from bot.telegram_service import TelegramService
+            bot_service = TelegramService()
+            if bot_service.is_enabled():
+                await bot_service.send_error_notification(f"Ошибка планового парсинга: {str(e)}")
+        except Exception as bot_error:
+            logger.error(f"Не удалось отправить уведомление об ошибке: {bot_error}")
+
+def run_scheduled_task():
+    """Обертка для запуска асинхронной задачи"""
+    try:
+        # Создаем новый event loop для каждого запуска
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(scheduled_parser_run())
+        loop.close()
+    except Exception as e:
+        logger.error(f"Критическая ошибка в планировщике: {e}")
+
+def setup_scheduler():
+    """Настройка планировщика"""
+    # Запуск каждый день в 01:00 по московскому времени
+    schedule.every().day.at("01:00").do(run_scheduled_task)
+    
+    logger.info("⏰ Планировщик настроен:")
+    logger.info("   • Время запуска: 01:00 МСК ежедневно")
+    logger.info("   • Режим: полный парсинг (все 35 страниц)")
+    logger.info("   • Дедупликация: включена")
+    
+    # Показываем время следующего запуска
+    next_run = schedule.next_run()
+    if next_run:
+        moscow_next_run = next_run.astimezone(MOSCOW_TZ)
+        logger.info(f"   • Следующий запуск: {moscow_next_run.strftime('%Y-%m-%d %H:%M:%S')} МСК")
 
 def main():
-    """Set up and start the scheduler."""
-    scheduler = BlockingScheduler()
+    """Основная функция планировщика"""
+    logger.info("🚀 ЗАПУСК ПЛАНИРОВЩИКА ПАРСЕРА")
+    logger.info("=" * 60)
     
-    scheduler.add_job(
-        run_parser,
-        trigger=CronTrigger(hour=3, minute=0),
-        id='parsing_job',
-        name='Run parsing at 3 AM daily',
-        replace_existing=True
-    )
+    # Создаем директорию для логов
+    Path("logs").mkdir(exist_ok=True)
     
-    scheduler.add_job(
-        run_parser,
-        trigger='date',
-        run_date=datetime.now(),
-        id='initial_run',
-        name='Initial parser run'
-    )
-    
-    log.info("Scheduler started. Parser will run at 3:00 AM daily.")
+    # Проверяем БД дедупликации
     try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        log.info("Scheduler stopped")
+        stats = dedup_db.get_stats()
+        logger.info(f"✅ База данных дедупликации готова")
+        logger.info(f"   • Лотов в БД: {stats.get('total_lots', 0)}")
+        logger.info(f"   • Объявлений в БД: {stats.get('total_offers', 0)}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка БД дедупликации: {e}")
+        return
+    
+    # Настраиваем планировщик
+    setup_scheduler()
+    
+    # Основной цикл планировщика
+    logger.info("🔄 Планировщик запущен. Ожидание расписания...")
+    try:
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Проверяем каждую минуту
+            
+    except KeyboardInterrupt:
+        logger.info("⚠️ Планировщик остановлен пользователем")
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка планировщика: {e}")
 
-if __name__ == "__main__":
-    main()
+"""if __name__ == "__main__":
+    main()"""
