@@ -28,9 +28,22 @@ class BotService:
         try:
             self.bot = RealEstateBot(bot_token)
             self._initialized = True
+            
+            # ДОБАВЛЕНО: Загружаем подписчиков сразу после инициализации
+            asyncio.create_task(self._load_subscribers_wrapper())
+            
             logger.info("Telegram bot service initialized")
         except Exception as e:
             logger.error(f"Failed to initialize bot service: {e}")
+
+    async def _load_subscribers_wrapper(self):
+        """Обертка для загрузки подписчиков"""
+        try:
+            if self.bot and hasattr(self.bot, '_load_subscribers'):
+                await self.bot._load_subscribers()
+                logger.info(f"Subscribers loaded: {len(self.bot.subscribers)}")
+        except Exception as e:
+            logger.error(f"Error loading subscribers in wrapper: {e}")
     
     async def notify_new_lots(self, lots: List[Lot]):
         """Уведомляет подписчиков о новых лотах"""

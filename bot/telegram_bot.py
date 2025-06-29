@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 class RealEstateBot:
     def __init__(self, token: str):
         try:
+            from bot.message_formatter import MessageFormatter
+            self.message_formatter = MessageFormatter()
             logger.info(f"Initializing bot with token: {token[:20]}...")
             self.bot = Bot(token=token)
             self.dp = Dispatcher()
@@ -267,24 +269,28 @@ class RealEstateBot:
                 await asyncio.sleep(1)  # Пауза между лотами
     
     def _should_notify_about_lot(self, lot: Lot) -> bool:
-        """Определяет, стоит ли уведомлять о лоте"""
-        # Уведомляем если:
-        # 1. Доходность выше порога из конфига
-        # 2. Большое отклонение от рынка (выгодная цена)
-        # 3. Лот имеет достаточно данных для анализа
+        """Определяет, стоит ли уведомлять о лоте - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         
+        # НОВАЯ ЛОГИКА: уведомляем на основе плюсиков
+        plus_count = getattr(lot, 'plus_count', 0)
+        
+        # Если есть хотя бы 1 плюсик - уведомляем
+        if plus_count >= 1:
+            return True
+        
+        # Дополнительная проверка для безопасности (старая логика как fallback)
         yield_threshold = CONFIG.get('market_yield_threshold', 10)
+        if yield_threshold > 1:
+            yield_threshold = yield_threshold / 100
         
         # Проверяем доходность
-        if hasattr(lot, 'annual_yield_percent') and lot.annual_yield_percent >= yield_threshold:
+        annual_yield = getattr(lot, 'annual_yield_percent', 0)
+        if annual_yield >= yield_threshold:
             return True
         
-        # Проверяем отклонение от рыночной цены
-        if hasattr(lot, 'market_deviation_percent') and lot.market_deviation_percent <= -20:
-            return True
-        
-        # Если есть капитализация больше 0
-        if hasattr(lot, 'capitalization_rub') and lot.capitalization_rub > 0:
+        # Проверяем капитализацию
+        capitalization_percent = getattr(lot, 'capitalization_percent', 0)
+        if capitalization_percent >= 0.15:  # 15% как 0.15
             return True
         
         return False
@@ -315,15 +321,29 @@ class RealEstateBot:
             import json
             import os
             
-            subscribers_file = os.path.join("bot_data", "subscribers.json")
+            # Создаем директорию если её нет
+            bot_data_dir = "bot_data"
+            if not os.path.exists(bot_data_dir):
+                os.makedirs(bot_data_dir)
+                logger.info("Created bot_data directory")
+            
+            subscribers_file = os.path.join(bot_data_dir, "subscribers.json")
+            
             if os.path.exists(subscribers_file):
                 with open(subscribers_file, 'r') as f:
                     subscribers_list = json.load(f)
-                    self.subscribers = set(subscribers_list)
-                    logger.info(f"Loaded {len(self.subscribers)} subscribers")
+                    # ИСПРАВЛЕНО: убеждаемся, что это числа
+                    self.subscribers = set(int(sub) for sub in subscribers_list)
+                    logger.info(f"✅ Loaded {len(self.subscribers)} subscribers: {list(self.subscribers)}")
             else:
                 self.subscribers = set()
                 logger.info("No existing subscribers file, starting fresh")
+                
+                # Создаем пустой файл
+                with open(subscribers_file, 'w') as f:
+                    json.dump([], f)
+                logger.info("Created empty subscribers file")
+                
         except Exception as e:
             logger.error(f"Error loading subscribers: {e}")
             self.subscribers = set()

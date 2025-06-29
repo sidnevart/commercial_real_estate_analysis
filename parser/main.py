@@ -861,29 +861,39 @@ async def filter_offers_by_distance(lot_address: str, offers: List[Offer], max_d
     return filtered_offers
 
 
-async def main():
+async def main(max_pages: int = 8, production_mode: bool = False):
     """
-    Основная функция программы. Получает лоты с торгов, ищет похожие 
-    объявления на ЦИАН, рассчитывает метрики и сохраняет результаты.
+    Основная функция программы с поддержкой production режима и дедупликации.
+    
+    Args:
+        max_pages: Количество страниц для парсинга (10 для тестов, 40 для production)
+        production_mode: Режим production с полной обработкой и дедупликацией
     """
     try:
         # Инициализируем Telegram бота
         bot_service.initialize()
         
+        # В production режиме всегда парсим все страницы
+        if production_mode:
+            max_pages = 40
+            logging.info("🚀 PRODUCTION РЕЖИМ: обработка всех 40 страниц с дедупликацией")
+        else:
+            logging.info(f"🧪 ТЕСТОВЫЙ РЕЖИМ: обработка {max_pages} страниц")
+        
         # Настраиваем заголовки всех таблиц
         setup_all_headers()
         
         # Проверяем аргументы командной строки для возобновления
-        resume_from_checkpoint = "--resume" in sys.argv
+        resume_from_checkpoint = "--resume" in sys.argv and not production_mode
         
         # Инициализируем базовые переменные
         browser_operations = 0
         browser_refresh_interval = CONFIG.get("browser_refresh_interval", 20)
         lot_save_interval = CONFIG.get("lot_save_interval", 5)
         
-        # Добавляем поддержку отладочного радиуса
-        debug_radius = CONFIG.get("debug_search_radius", 3)  # Радиус для отладки - изменено на 3 км
-        search_radius = CONFIG.get("area_search_radius", 3)  # Радиус поиска - изменено на 3 км
+        # Радиусы поиска
+        debug_radius = CONFIG.get("debug_search_radius", 3)
+        search_radius = CONFIG.get("area_search_radius", 3)
         
         # Глобальные коллекции для хранения данных
         all_sale_offers = []
@@ -892,8 +902,9 @@ async def main():
         district_offer_count = defaultdict(int)
         processed_lots = []
         
+        # === ЗАГРУЗКА ДАННЫХ ===
         if resume_from_checkpoint:
-            # Пытаемся загрузить чекпоинт
+            # Пытаемся загрузить чекпоинт (только в тестовом режиме)
             checkpoint = load_checkpoint()
             
             if checkpoint:
@@ -906,91 +917,136 @@ async def main():
                 all_rent_offers = checkpoint.get("all_rent_offers", [])
                 processed_lots = [lots[i] for i in processed_indices if i < len(lots)]
                 
-                # Определяем, с какого индекса продолжить
                 start_idx = max(processed_indices) + 1 if processed_indices else 0
                 logging.info(f"🔄 Возобновляем обработку с лота #{start_idx+1} из {len(lots)}")
                 logging.info(f"📊 Восстановлены данные: {len(all_sale_offers)} объявлений о продаже, {len(all_rent_offers)} объявлений об аренде")
             else:
-                # Не удалось восстановить, начинаем с нуля
                 logging.info("⚠️ Не удалось восстановить из чекпоинта. Начинаем с нуля.")
-                lots = await fetch_lots(max_pages=10)
+                lots = await fetch_lots(max_pages=max_pages)
                 processed_indices = set()
                 start_idx = 0
         else:
-            # Начинаем с нуля
-            logging.info("🔄 Запускаем обработку с нуля (без восстановления)")
-            lots = await fetch_lots(max_pages=10)
+            # Получаем лоты с торгов
+            logging.info(f"📥 Загрузка лотов (max_pages={max_pages})")
+            lots = await fetch_lots(max_pages=max_pages)
             processed_indices = set()
             start_idx = 0
         
         logging.info(f"✅ Получено {len(lots)} лотов для обработки")
         
-        # Проверка работоспособности CIAN-парсера
+        # === ДЕДУПЛИКАЦИЯ (только в production режиме) ===
+        if production_mode:
+            new_lots = []
+            updated_lots = []
+            duplicate_count = 0
+            
+            logging.info("🔍 Проверка дубликатов лотов...")
+            
+            for lot in lots:
+                is_duplicate, info = dedup_db.is_duplicate(lot)
+                
+                if is_duplicate:
+                    duplicate_count += 1
+                    if duplicate_count <= 5:  # Логируем только первые 5
+                        logging.info(f"🔄 Дубликат: {lot.id} - {lot.name[:50]}...")
+                else:
+                    if info and info.get("price_changed"):
+                        updated_lots.append(lot)
+                        logging.info(f"💰 Цена изменилась: {lot.id} - {info['old_price']:,.0f} → {lot.price:,.0f}")
+                    else:
+                        new_lots.append(lot)
+                    
+                    # Добавляем в базу дедупликации
+                    dedup_db.add_lot(lot)
+            
+            logging.info(f"📊 Результаты дедупликации:")
+            logging.info(f"   • Новых лотов: {len(new_lots)}")
+            logging.info(f"   • Обновленных лотов: {len(updated_lots)}")
+            logging.info(f"   • Дубликатов: {duplicate_count}")
+            
+            # Обрабатываем только новые и обновленные лоты
+            lots_to_process = new_lots + updated_lots
+            
+            if not lots_to_process:
+                logging.info("✅ Нет новых лотов для обработки")
+                if bot_service.is_enabled():
+                    await bot_service.send_daily_summary(0, 0)
+                return
+            
+            logging.info(f"🔄 Обработка {len(lots_to_process)} лотов после дедупликации...")
+            lots = lots_to_process  # Заменяем список лотов
+            start_idx = 0  # Начинаем с начала отфильтрованного списка
+        
+        # === ПРОВЕРКА CIAN ПАРСЕРА ===
         cian_metrics = get_cian_metrics()
         logging.info(f"Статус CIAN-парсера: {cian_metrics}")
         
         # Инициализируем коллекции для пакетной обработки
         current_batch_sale = []
         current_batch_rent = []
-        batch_size = 1  # Размер пакета для сохранения
+        batch_size = 1
         
-        # Основной цикл обработки лотов, начиная с start_idx
+        # === ОСНОВНОЙ ЦИКЛ ОБРАБОТКИ ЛОТОВ ===
         for i in range(start_idx, len(lots)):
             lot = lots[i]
             
-            # Determine if the address has sufficient components for narrowed search
-            address_components = calculate_address_components(lot.address)
+            logging.info(f"🔄 Обработка лота {i+1}/{len(lots)}: {lot.id} - {lot.name[:50]}...")
             
-            # Skip CIAN parsing if we don't have enough address information
-            # We need at least district, street, or city/settlement to narrow search
-            if (address_components["confidence"] < 0.5 or
-                (not address_components["district"] and 
-                not address_components["street"] and
-                not (address_components["city"] or address_components["settlement"]))):
-                
-                logging.warning(f"⚠️ Insufficient address components for lot {lot.id}: '{lot.name}'")
-                logging.warning(f"Address: '{lot.address}' - would require city-wide search")
-                
-                # Set all metrics to zero
-                lot.market_price_per_sqm = 0.0
-                lot.market_value = 0.0
-                lot.capitalization_rub = 0.0
-                lot.capitalization_percent = 0.0
-                lot.monthly_gap = 0.0
-                lot.annual_yield_percent = 0.0
-                lot.annual_income = 0.0
-                lot.average_rent_price_per_sqm = 0.0
-                lot.sale_offers_count = 0
-                lot.rent_offers_count = 0
-                lot.filtered_sale_offers_count = 0
-                lot.filtered_rent_offers_count = 0
-                lot.plus_rental = 0
-                lot.plus_sale = 0
-                lot.plus_count = 0
-                lot.status = "insufficient_address"
-                
-                # Save this lot with zero metrics
-                processed_lots.append(lot)
-                continue
             try:
-                lot = lots[i]
+                # Проверяем качество адреса
+                address_components = calculate_address_components(lot.address)
+                
+                # Пропускаем лоты с недостаточной информацией об адресе
+                if (address_components["confidence"] < 0.5 or
+                    (not address_components["district"] and 
+                     not address_components["street"] and
+                     not (address_components["city"] or address_components["settlement"]))):
+                    
+                    logging.warning(f"⚠️ Недостаточно данных об адресе для лота {lot.id}: '{lot.address}'")
+                    
+                    # Устанавливаем нулевые метрики
+                    lot.market_price_per_sqm = 0.0
+                    lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
+                    lot.market_value = 0.0
+                    lot.capitalization_rub = 0.0
+                    lot.capitalization_percent = 0.0
+                    lot.monthly_gap = 0.0
+                    lot.annual_yield_percent = 0.0
+                    lot.annual_income = 0.0
+                    lot.average_rent_price_per_sqm = 0.0
+                    lot.sale_offers_count = 0
+                    lot.rent_offers_count = 0
+                    lot.filtered_sale_offers_count = 0
+                    lot.filtered_rent_offers_count = 0
+                    lot.plus_rental = 0
+                    lot.plus_sale = 0
+                    lot.plus_count = 0
+                    lot.status = "insufficient_address"
+                    
+                    processed_lots.append(lot)
+                    processed_indices.add(i)
+                    
+                    # Сохраняем и отмечаем как обработанный
+                    push_lots([lot], "lots_all")
+                    if production_mode:
+                        dedup_db.mark_processed(lot.id, has_analytics=False)
+                    
+                    continue
                 
                 # Определяем район лота
                 if not hasattr(lot, 'district') or not lot.district:
                     lot.district = calculate_district(lot.address)
-                logging.info(f"Лот {lot.id}: '{lot.name}' находится в районе '{lot.district}'")
+                logging.info(f"Район лота: '{lot.district}'")
                 
                 # Готовим фильтр для поиска на ЦИАН
-                lot_uuid = lot.uuid
                 search_filter = unformatted_address_to_cian_search_filter(lot.address)
                 logging.info(f"Поиск по фильтру: {search_filter}")
                 
-                # Skip CIAN parsing if the filter is for the entire Moscow or Moscow Oblast region
+                # Пропускаем слишком широкие фильтры
                 if search_filter == "region=1" or search_filter == "region=4593":
-                    logging.warning(f"⚠️ Слишком широкий фильтр для лота {lot.id}: '{lot.name}' - {search_filter}")
-                    logging.warning(f"Адрес: '{lot.address}' - пропускаем парсинг ЦИАН для экономии времени")
+                    logging.warning(f"⚠️ Слишком широкий фильтр для лота {lot.id} - пропускаем ЦИАН")
                     
-                    # Set all metrics to zero
+                    # Устанавливаем нулевые метрики
                     lot.market_price_per_sqm = 0.0
                     lot.current_price_per_sqm = lot.price / lot.area if lot.area > 0 else 0
                     lot.market_value = 0.0
@@ -1009,23 +1065,25 @@ async def main():
                     lot.plus_count = 0
                     lot.status = "region_too_broad"
                     
-                    # Save lot with zero metrics and continue to next lot
                     processed_lots.append(lot)
                     processed_indices.add(i)
-                    push_lots([lot], "lots_all")
-                    logging.info(f"✅ Сохранен лот {lot.id} с нулевыми метриками в таблицу lots_all")
-                    continue
                     
-                # If we get here, we have a more specific filter, so continue with normal processing
-                # Получаем объявления с ЦИАН
-                sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot_uuid)
+                    # Сохраняем и отмечаем как обработанный
+                    push_lots([lot], "lots_all")
+                    if production_mode:
+                        dedup_db.mark_processed(lot.id, has_analytics=False)
+                    
+                    continue
+                
+                # === ПАРСИНГ ЦИАН ===
+                sale_offers, rent_offers = fetch_nearby_offers(search_filter, lot.uuid)
                 logging.info(f"Получено {len(sale_offers)} объявлений о продаже и {len(rent_offers)} объявлений об аренде")
                 
                 # Добавляем счетчики к лоту
                 lot.sale_offers_count = len(sale_offers)
                 lot.rent_offers_count = len(rent_offers)
                 
-                # Обновляем счетчик браузерных операций и перезагружаем если нужно
+                # Обновляем счетчик браузерных операций
                 browser_operations += 1
                 if browser_operations >= browser_refresh_interval:
                     logging.info(f"🔄 Перезагрузка браузера после {browser_operations} операций")
@@ -1037,34 +1095,17 @@ async def main():
                     except Exception as browser_error:
                         logging.error(f"❌ Ошибка при перезагрузке браузера: {browser_error}")
                 
-                # Сохраняем все полученные объявления в глобальную коллекцию
-                if hasattr(sale_offers, 'copy'):
-                    all_raw_sale = sale_offers.copy()
-                else:
-                    all_raw_sale = list(sale_offers)
-                
-                if hasattr(rent_offers, 'copy'):
-                    all_raw_rent = rent_offers.copy() 
-                else:
-                    all_raw_rent = list(rent_offers)
-                
-                # Выбираем эффективный радиус поиска
+                # Выбираем радиус поиска
                 effective_radius = debug_radius if debug_radius else search_radius
                 
-                # Увеличиваем радиус, если не хватает объявлений
+                # Увеличиваем радиус при недостатке объявлений
                 if not debug_radius and (len(sale_offers) < 3 or len(rent_offers) < 3) and search_radius < 10:
-                    logging.info(f"Увеличиваем радиус поиска до 10 км из-за малого количества объявлений")
+                    logging.info(f"Увеличиваем радиус поиска до 7 км")
                     effective_radius = 7
-                    
-                # Если нет объявлений вообще, используем особый режим
-                if not sale_offers and not rent_offers and not debug_radius:
-                    logging.warning("⚠️ Нет объявлений, включаем режим отладки (радиус 1000 км)")
-                    effective_radius = 10
                 
-                # Фильтруем объявления по расстоянию от лота
-                logging.info(f"Фильтрация объявлений по расстоянию (макс. {effective_radius} км) для лота {lot.id}")
+                # === ФИЛЬТРАЦИЯ ОБЪЯВЛЕНИЙ ===
+                logging.info(f"Фильтрация объявлений по расстоянию (макс. {effective_radius} км)")
                 
-                # Используем безопасную фильтрацию с резервным механизмом
                 try:
                     filtered_sale_offers = await filter_offers_by_distance(lot.address, sale_offers, effective_radius)
                 except Exception as e:
@@ -1084,44 +1125,57 @@ async def main():
                     offers_by_district[offer.district].append(offer)
                     district_offer_count[offer.district] += 1
                 
-                # Добавляем в пакеты для последующей записи
+                # Добавляем в коллекции
                 current_batch_sale.extend(filtered_sale_offers)
                 current_batch_rent.extend(filtered_rent_offers)
                 all_sale_offers.extend(filtered_sale_offers)
                 all_rent_offers.extend(filtered_rent_offers)
+                
                 lot.filtered_sale_offers_count = len(filtered_sale_offers)
                 lot.filtered_rent_offers_count = len(filtered_rent_offers)
-                # ВАЖНО: Рассчитываем метрики на основе ВСЕХ объявлений
-                # а не только отфильтрованных
+                
+                # === РАСЧЕТ МЕТРИК ===
                 calculate_lot_metrics(lot, filtered_sale_offers, filtered_rent_offers)
                 
-                # Добавляем классификацию объекта через GPT
+                # Классификация через GPT (если включена)
                 if CONFIG.get("gpt_analysis_enabled", False):
                     try:
                         lot.classification = await classify_property(lot)
                     except Exception as e:
                         logging.error(f"Ошибка при классификации объекта {lot.id}: {e}")
-                        # Создаем пустую классификацию если произошла ошибка
                         lot.classification = PropertyClassification()
                 else:
                     lot.classification = PropertyClassification()
                 
-                # Сохраняем лот в основную таблицу
+                # === СОХРАНЕНИЕ И УВЕДОМЛЕНИЯ ===
                 push_lots([lot], "lots_all")
                 logging.info(f"✅ Сохранен лот {lot.id} в таблицу lots_all")
                 
-                # Отправляем уведомление в Telegram, если бот включен
+                # Отмечаем как обработанный в базе дедупликации
+                if production_mode:
+                    dedup_db.mark_processed(lot.id, has_analytics=True)
+                
+                # Отправляем уведомление в Telegram (только для НОВЫХ лотов в production)
                 if bot_service.is_enabled():
-                    try:
-                        await bot_service.notify_new_lots([lot])
-                    except Exception as e:
-                        logging.error(f"Ошибка при отправке уведомления о лоте {lot.id}: {e}")
+                    should_notify = True
+                    
+                    # В production режиме уведомляем только о новых лотах
+                    if production_mode:
+                        should_notify = lot in new_lots  # Только новые, не обновленные
+                    
+                    if should_notify:
+                        try:
+                            await bot_service.notify_new_lots([lot])
+                            if production_mode:
+                                dedup_db.mark_processed(lot.id, sent_to_telegram=True)
+                        except Exception as e:
+                            logging.error(f"Ошибка при отправке уведомления о лоте {lot.id}: {e}")
                 
                 # Сохраняем обработанный лот
                 processed_lots.append(lot)
                 processed_indices.add(i)
                 
-                # Отправляем пакеты объявлений в Google Sheets
+                # === СОХРАНЕНИЕ ПАКЕТОВ ОБЪЯВЛЕНИЙ ===
                 if len(current_batch_sale) >= batch_size:
                     logging.info(f"Сохраняем пакет из {len(current_batch_sale)} объявлений о продаже")
                     push_offers("cian_sale_all", current_batch_sale)
@@ -1132,9 +1186,8 @@ async def main():
                     push_offers("cian_rent_all", current_batch_rent)
                     current_batch_rent = []
                 
-                # Периодическое сохранение контрольной точки
-                if i % lot_save_interval == 0 or i == len(lots) - 1:
-                    # Сохраняем чекпоинт
+                # === ПЕРИОДИЧЕСКОЕ СОХРАНЕНИЕ ЧЕКПОИНТА ===
+                if not production_mode and (i % lot_save_interval == 0 or i == len(lots) - 1):
                     save_progress_checkpoint(
                         lots=lots,
                         processed_indices=list(processed_indices),
@@ -1145,13 +1198,14 @@ async def main():
                     )
                     logging.info(f"💾 Создана контрольная точка для {len(processed_lots)} лотов")
                 
-                # Добавляем небольшую паузу между лотами
+                # Пауза между лотами
                 await asyncio.sleep(1)
                 
             except Exception as e:
                 logging.error(f"❌ Ошибка при обработке лота {getattr(lot, 'id', 'unknown')}: {e}", exc_info=True)
-                # Не прерываем всю обработку из-за одного лота
                 continue
+        
+        # === ФИНАЛИЗАЦИЯ ===
         
         # Сохраняем оставшиеся объявления
         if current_batch_sale:
@@ -1162,12 +1216,14 @@ async def main():
             logging.info(f"Сохраняем оставшиеся {len(current_batch_rent)} объявлений об аренде")
             push_offers("cian_rent_all", current_batch_rent)
 
-        apply_all_formatting()
-        logging.info(f"🎨 Применено промежуточное форматирование на шаге {i}")
+        # Применяем форматирование к таблицам
+        try:
+            apply_all_formatting()
+            logging.info("🎨 Применено форматирование таблиц")
+        except Exception as e:
+            logging.error(f"Ошибка при форматировании: {e}")
 
         # Рассчитываем и экспортируем статистику по районам
-        median_prices = calculate_median_prices(offers_by_district)
-        
         if offers_by_district and any(len(offers) >= 2 for offers in offers_by_district.values()):
             try:
                 median_prices = calculate_median_prices(offers_by_district)
@@ -1179,7 +1235,7 @@ async def main():
             logging.info("⏭️ Пропускаем расчет медианных цен (недостаточно данных)")
             median_prices = {}
 
-        # Отправляем окончательную статистику по районам
+        # Отправляем статистику по районам
         if district_offer_count and len(district_offer_count) > 0:
             try:
                 logging.info(f"Отправка статистики по {len(district_offer_count)} районам")
@@ -1187,29 +1243,63 @@ async def main():
             except Exception as e:
                 logging.error(f"❌ Ошибка при отправке статистики районов: {e}")
         else:
-            # Создаем минимальную заглушку
-            logging.info("⏭️ Отправляем заглушку для статистики районов")
             try:
                 push_district_stats({"Москва": 0, "Московская область": 0})
             except Exception as e:
                 logging.error(f"❌ Ошибка при отправке заглушки: {e}")
         
-        # Отправляем ежедневную сводку в Telegram
+        # === TELEGRAM СВОДКА ===
+        logging.info(f"BOT SERVICE STATUS: {bot_service.is_enabled()}")
         if bot_service.is_enabled() and processed_lots:
             try:
                 # Считаем рекомендованные лоты
+                market_yield_threshold = CONFIG.get('market_yield_threshold', 10)
+
+                # ИСПРАВЛЕНО: конвертируем threshold в дроби для сравнения с метриками
+                if market_yield_threshold > 1:
+                    market_yield_threshold_decimal = market_yield_threshold / 100
+                else:
+                    market_yield_threshold_decimal = market_yield_threshold
+
                 recommended_count = sum(1 for lot in processed_lots 
-                                      if getattr(lot, 'annual_yield_percent', 0) >= CONFIG.get('market_yield_threshold', 10))
+                                    if getattr(lot, 'annual_yield_percent', 0) >= market_yield_threshold_decimal)
+
+                # Логируем для отладки
+                logging.info(f"🎯 Анализ рекомендаций:")
+                logging.info(f"   • Порог доходности: {market_yield_threshold}% ({market_yield_threshold_decimal:.3f})")
+                logging.info(f"   • Всего лотов: {len(processed_lots)}")
+
+                # Показываем несколько примеров
+                for i, lot in enumerate(processed_lots[:5]):
+                    yield_percent = getattr(lot, 'annual_yield_percent', 0)
+                    is_recommended = yield_percent >= market_yield_threshold_decimal
+                    logging.info(f"   • Лот {i+1}: {yield_percent*100:.1f}% - {'✅ РЕК' if is_recommended else '❌ НЕ рек'}")
+
+                logging.info(f"   • ИТОГО РЕКОМЕНДОВАННЫХ: {recommended_count}")
                 
                 await bot_service.send_daily_summary(len(processed_lots), recommended_count)
                 logging.info(f"Отправлена ежедневная сводка: {len(processed_lots)} лотов, {recommended_count} рекомендованных")
             except Exception as e:
                 logging.error(f"Ошибка при отправке ежедневной сводки: {e}")
         
+        # === ФИНАЛЬНАЯ СТАТИСТИКА ===
+        if production_mode:
+            stats = dedup_db.get_stats()
+            logging.info(f"📊 Финальная статистика базы дедупликации: {stats}")
+        
         logging.info("✅ Обработка успешно завершена!")
             
     except Exception as e:
         logging.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {str(e)}", exc_info=True)
+        
+        # Отправляем уведомление об ошибке в Telegram
+        if bot_service.is_enabled():
+            try:
+                error_message = f"❌ Критическая ошибка в парсере:\n{str(e)[:500]}"
+                # Можно добавить отправку админам
+            except:
+                pass
+        
         # Сохраняем состояние для отладки
         try:
             with open(f"crash_dump_{int(time.time())}.pkl", "wb") as f:
@@ -1221,6 +1311,11 @@ async def main():
             logging.info("✅ Сохранено состояние для отладки")
         except Exception as dump_error:
             logging.error(f"❌ Не удалось сохранить состояние: {dump_error}")
-            
+
 if __name__ == "__main__":
+    
+    # Парсим аргумент max_pages
+    
+  
+    
     asyncio.run(main())

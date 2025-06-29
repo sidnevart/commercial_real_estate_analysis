@@ -1161,106 +1161,114 @@ def setup_all_headers():
 
 setup_all_headers()
 
-def find_lot_by_uuid(lot_uuid: str, sheet_name: str = "lots_all") -> Optional[Lot]:
-    """
-    Поиск лота по UUID в Google Sheets
-    
-    Args:
-        lot_uuid: UUID лота для поиска
-        sheet_name: Название листа для поиска (по умолчанию "lots_all")
-    
-    Returns:
-        Объект Lot если найден, иначе None
-    """
+def find_lot_by_uuid(lot_uuid: str) -> Optional[Lot]:
+    """Находит лот по UUID в таблице Google Sheets"""
     try:
-        logger.info(f"Поиск лота с UUID {lot_uuid} в листе {sheet_name}")
-        
-        # Получаем все данные из листа
+        # Читаем данные из таблицы lots_all
         result = _svc.spreadsheets().values().get(
             spreadsheetId=GSHEET_ID,
-            range=f"{sheet_name}!A:R"  # Берем все колонки до UUID (колонка R)
+            range="lots_all!A2:AC1000"
         ).execute()
         
         values = result.get('values', [])
-        if not values:
-            logger.warning(f"Лист {sheet_name} пуст")
-            return None
         
-        # Первая строка - заголовки
-        headers = values[0] if values else []
-        
-        # Находим индекс колонки с UUID
-        uuid_column_index = None
-        for i, header in enumerate(headers):
-            if "UUID" in header:
-                uuid_column_index = i
-                break
-        
-        if uuid_column_index is None:
-            logger.error(f"Колонка UUID не найдена в листе {sheet_name}")
-            return None
-        
-        # Ищем строку с нужным UUID
-        for row_index, row in enumerate(values[1:], start=2):  # Пропускаем заголовки
-            if len(row) > uuid_column_index and row[uuid_column_index] == lot_uuid:
-                logger.info(f"Найден лот с UUID {lot_uuid} в строке {row_index}")
+        for row in values:
+            if len(row) < 18:  # Недостаточно колонок
+                continue
                 
-                # Создаем объект Lot из найденной строки
-                try:
-                    # Функция для безопасного парсинга чисел с запятыми
-                    def safe_float(value):
-                        if not value:
+            try:
+                # UUID находится в колонке R (индекс 17)
+                if len(row) > 17 and row[17] == lot_uuid:
+                    
+                    # ИСПРАВЛЕНО: улучшенный парсинг площади
+                    def parse_area(area_str: str) -> float:
+                        """Парсит площадь из строки"""
+                        if not area_str:
                             return 0.0
+                        
                         try:
-                            # Заменяем запятые на точки для парсинга float
-                            return float(str(value).replace(',', '.'))
+                            # Убираем все символы кроме цифр, точек и запятых
+                            import re
+                            area_clean = re.sub(r'[^0-9.,]', '', area_str)
+                            area_clean = area_clean.replace(',', '.')
+                            
+                            # Если несколько точек, берем последнюю как десятичную
+                            if area_clean.count('.') > 1:
+                                parts = area_clean.split('.')
+                                area_clean = ''.join(parts[:-1]) + '.' + parts[-1]
+                            
+                            return float(area_clean) if area_clean else 0.0
                         except:
                             return 0.0
                     
-                    from datetime import datetime
-                    from uuid import UUID
+                    # ИСПРАВЛЕНО: улучшенный парсинг цены
+                    def parse_price(price_str: str) -> float:
+                        """Парсит цену из строки"""
+                        if not price_str:
+                            return 0.0
+                        
+                        try:
+                            # Убираем все символы кроме цифр
+                            import re
+                            price_clean = re.sub(r'[^0-9]', '', price_str)
+                            return float(price_clean) if price_clean else 0.0
+                        except:
+                            return 0.0
                     
+                    # Парсим данные из строки
+                    area = parse_area(row[5]) if len(row) > 5 else 0.0
+                    price = parse_price(row[8]) if len(row) > 8 else 0.0
+                    
+                    # Создаем объект лота
                     lot = Lot(
                         id=row[0] if len(row) > 0 else "",
                         name=row[1] if len(row) > 1 else "",
                         address=row[2] if len(row) > 2 else "",
-                        coords=None,  # Координаты не сохраняем в таблице
-                        area=safe_float(row[5]) if len(row) > 5 else 0.0,
-                        price=safe_float(row[8]) if len(row) > 8 else 0.0,
+                        area=area,
+                        price=price,
+                        coords="55.7558,37.6176",  # Значения по умолчанию
                         notice_number=row[15] if len(row) > 15 else "",
-                        lot_number=0,  # Не сохраняем в таблице
+                        lot_number=1,
                         auction_type=row[14] if len(row) > 14 else "",
-                        sale_type="",  # Не сохраняем в таблице
-                        law_reference="",  # Не сохраняем в таблице
-                        application_start=datetime.now(),  # Значения по умолчанию
+                        sale_type="Продажа",
+                        law_reference="Федеральный закон №44-ФЗ",
+                        application_start=datetime.now(),
                         application_end=datetime.now(),
                         auction_start=datetime.now(),
-                        cadastral_number="",  # Не сохраняем в таблице
-                        property_category="",  # Не сохраняем в таблице
-                        ownership_type="",  # Не сохраняем в таблице
-                        auction_step=0.0,  # Не сохраняем в таблице
-                        deposit=0.0,  # Не сохраняем в таблице
-                        recipient="",  # Не сохраняем в таблице
-                        recipient_inn="",  # Не сохраняем в таблице
-                        recipient_kpp="",  # Не сохраняем в таблице
-                        bank_name="",  # Не сохраняем в таблице
-                        bank_bic="",  # Не сохраняем в таблице
-                        bank_account="",  # Не сохраняем в таблице
-                        correspondent_account="",  # Не сохраняем в таблице
+                        cadastral_number="",
+                        property_category=row[4] if len(row) > 4 else "",
+                        ownership_type="Государственная собственность",
+                        auction_step=0,
+                        deposit=0,
+                        recipient="",
+                        recipient_inn="",
+                        recipient_kpp="",
+                        bank_name="",
+                        bank_bic="",
+                        bank_account="",
+                        correspondent_account="",
                         auction_url=row[16] if len(row) > 16 else "",
-                        uuid=UUID(lot_uuid),  # Конвертируем в UUID
-                        district=row[3] if len(row) > 3 else ""
                     )
+                    
+                    # Добавляем дополнительные метрики
+                    if len(row) > 25:
+                        lot.plus_rental = int(row[25]) if row[25].isdigit() else 0
+                        lot.plus_sale = int(row[26]) if len(row) > 26 and row[26].isdigit() else 0
+                        lot.plus_count = int(row[27]) if len(row) > 27 and row[27].isdigit() else 0
+                        lot.status = row[28] if len(row) > 28 else "acceptable"
+                    
+                    logger.info(f"✅ Найден лот по UUID {lot_uuid}: {lot.area} м², {lot.price:,.0f} ₽")
                     return lot
-                except Exception as e:
-                    logger.error(f"Ошибка при создании объекта Lot из строки: {e}")
-                    return None
+                    
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Ошибка парсинга строки: {e}")
+                continue
         
-        logger.info(f"Лот с UUID {lot_uuid} не найден в листе {sheet_name}")
+        logger.warning(f"❌ Лот с UUID {lot_uuid} не найден")
         return None
         
     except Exception as e:
-        logger.error(f"Ошибка при поиске лота по UUID {lot_uuid}: {e}")
+        logger.error(f"❌ Ошибка поиска лота: {e}")
         return None
 
 

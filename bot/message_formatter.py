@@ -47,17 +47,24 @@ class MessageFormatter:
         monthly_gap = getattr(lot, 'monthly_gap', 0)
         message += f"• *ГАП:* {monthly_gap:,.0f} ₽/мес\n"
         
+        # ИСПРАВЛЕНО: доходность как процент
         annual_yield = getattr(lot, 'annual_yield_percent', 0)
-        message += f"• *Доходность:* {annual_yield:.1f}%\n"
+        annual_yield_display = annual_yield * 100 if annual_yield < 1 else annual_yield
+        message += f"• *Доходность:* {annual_yield_display:.1f}%\n"
         
-        # Капитализация
+        # ДОБАВЛЕНО: Капитализация в рублях И процентах
         capitalization_rub = getattr(lot, 'capitalization_rub', 0)
-        message += f"• *Капитализация:* {capitalization_rub:,.0f} ₽\n"
+        capitalization_percent = getattr(lot, 'capitalization_percent', 0)
+        capitalization_percent_display = capitalization_percent * 100 if capitalization_percent < 1 else capitalization_percent
+        message += f"• *Капитализация:* {capitalization_rub:,.0f} ₽ ({capitalization_percent_display:.1f}%)\n"
         
-        # Отклонение от рынка
-        market_deviation = getattr(lot, 'market_deviation_percent', 0)
-        deviation_emoji = "📉" if market_deviation < 0 else "📈"
-        message += f"• *Отклонение от рынка:* {deviation_emoji} {market_deviation:.1f}%\n\n"
+        # ИСПРАВЛЕНО: Отклонение от рынка (разница между рыночной и текущей ценой)
+        if market_price_per_sqm > 0:
+            market_deviation_percent = ((current_price_per_sqm - market_price_per_sqm) / market_price_per_sqm) * 100
+            deviation_emoji = "📉" if market_deviation_percent < 0 else "📈"
+            message += f"• *Отклонение от рынка:* {deviation_emoji} {market_deviation_percent:.1f}%\n\n"
+        else:
+            message += f"• *Отклонение от рынка:* ❓ Нет данных\n\n"
         
         # Информация о торгах
         message += "🏛️ *Инфо о торгах*\n"
@@ -65,22 +72,36 @@ class MessageFormatter:
         message += f"• *Аукцион:* {lot.auction_type}\n"
         message += f"• *Документ:* {lot.notice_number}\n\n"
         
-        # Рекомендация ИИ
-        recommendation_emoji = "✅"
-        recommendation_text = "рекомендовано"
+        # ИСПРАВЛЕНО: Рекомендация на основе плюсиков
+        plus_count = getattr(lot, 'plus_count', 0)
+        plus_rental = getattr(lot, 'plus_rental', 0)
+        plus_sale = getattr(lot, 'plus_sale', 0)
         
-        # Логика рекомендации на основе доходности и отклонения от рынка
-        if annual_yield > 15 or market_deviation < -25:
+        if plus_count == 2:
+            recommendation_emoji = "🔥"
+            recommendation_text = "идеальный лот!"
+            recommendation_reason = "Отличные показатели по аренде и продаже"
+        elif plus_count == 1:
             recommendation_emoji = "✅"
-            recommendation_text = "рекомендовано"
-        elif annual_yield > 10 or market_deviation < -15:
-            recommendation_emoji = "⚠️"
-            recommendation_text = "рассмотреть"
+            if plus_rental:
+                recommendation_text = "хороший лот"
+                recommendation_reason = "Высокая доходность аренды"
+            else:
+                recommendation_text = "хороший лот"
+                recommendation_reason = "Выгодная цена покупки"
         else:
             recommendation_emoji = "❌"
             recommendation_text = "НЕ рекомендовано"
+            recommendation_reason = "Показатели ниже пороговых значений"
         
-        message += f"🧠 *Мнение ИИ:* {recommendation_emoji} {recommendation_text}\n\n"
+        message += f"🧠 *Мнение ИИ:* {recommendation_emoji} {recommendation_text}\n"
+        message += f"💡 *Причина:* {recommendation_reason}\n"
+        
+        # ДОБАВЛЕНО: Показываем плюсики для понимания
+        if plus_count > 0:
+            message += f"⭐ *Плюсы:* {plus_count}/2 (аренда: {'✅' if plus_rental else '❌'}, продажа: {'✅' if plus_sale else '❌'})\n"
+        
+        message += "\n"
         
         # Ссылка на торги (будет добавлена как кнопка)
         message += f"🔗 [Лот на torgi.gov.ru]({lot.auction_url})"
